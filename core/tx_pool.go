@@ -18,6 +18,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
 	"sort"
@@ -545,19 +546,72 @@ func (pool *TxPool) validateTx(tx *types.Transaction, local bool) error {
 	if pool.currentState.GetNonce(from) > tx.Nonce() {
 		return ErrNonceTooLow
 	}
+
 	// Transactor should have enough funds to cover the costs
 	// cost == V + GP * GL
 	if pool.currentState.GetBalance(from).Cmp(tx.Cost()) < 0 {
 		return ErrInsufficientFunds
 	}
-	// Ensure the transaction has more gas than the basic tx fee.
-	intrGas, err := IntrinsicGas(tx.Data(), tx.AccessList(), tx.To() == nil, true, pool.istanbul, pool.yoloV2)
-	if err != nil {
-		return err
+
+	if tx.Type() != types.BatchTxId {
+		// Ensure the transaction has more gas than the basic tx fee.
+		intrGas, err := IntrinsicGas(tx.Data(), tx.AccessList(), tx.To() == nil, true, pool.istanbul, pool.yoloV2)
+		if err != nil {
+			return err
+		}
+
+		if tx.Gas() < intrGas {
+			return ErrIntrinsicGas
+		}
+
+	} else {
+		batch, _ := tx.ToBatch()
+
+		// Ensure each child transaction is signed and adheres to the account's nonce ordering
+		for i, child := range batch.Children {
+			// Outer tx price must be less than max child price
+			if tx.GasPriceIntCmp(child.MaxPrice) > 0 {
+				return errors.New(fmt.Sprintf("outer gas price greater than max allowed internal gas price (child %d)", i))
+			}
+			if child.Type > 1 {
+				return errors.New(fmt.Sprintf("unsupported child tx type (child %d)", i))
+			}
+			// Make sure the child is signed properly
+			from, err := types.ChildSender(pool.signer, &child)
+			if err != nil {
+				return ErrInvalidSender
+			}
+			// Ensure the transaction adheres to nonce ordering
+			if pool.currentState.GetNonce(from) > tx.Nonce() {
+				return ErrNonceTooLow
+			}
+			// Ensure the child calls are conformant
+			for j, childTx := range child.Txs {
+				if childTx.Flags != 0 {
+					return errors.New(fmt.Sprintf("child tx (%d, %d): flag must be set to 0 (for now).", i, j))
+				}
+				if childTx.Amount.Sign() != 0 {
+					return errors.New(fmt.Sprintf("child tx (%d, %d): child cannot send any value (yet).", i, j))
+				}
+				if len(childTx.Extra) != 0 {
+					return errors.New(fmt.Sprintf("child tx (%d, %d): extra must be empty (for now).", i, j))
+				}
+				if childTx.Recipient == nil {
+					return errors.New(fmt.Sprintf("child tx (%d, %d): child calls cannot create contracts (yet).", i, j))
+				}
+				intrGas, err := IntrinsicGas(childTx.Payload, nil, tx.To() == nil, true, pool.istanbul, pool.yoloV2)
+				if err != nil {
+					return err
+				}
+				intrGas = intrGas - params.TxGas + params.ChildTxGas
+				if childTx.GasLimit < intrGas {
+					return errors.New(fmt.Sprintf("child tx (%d, %d): gas limit less than intrinsic cost", i, j))
+				}
+			}
+		}
+
 	}
-	if tx.Gas() < intrGas {
-		return ErrIntrinsicGas
-	}
+
 	return nil
 }
 

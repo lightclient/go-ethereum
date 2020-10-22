@@ -29,6 +29,7 @@ import (
 
 var (
 	ErrInvalidChainId = errors.New("invalid chain id for signer")
+	ErrTxNotSupported = errors.New("EIP-2718 tx must be used with EIP-2718 signer")
 )
 
 // sigCache is used to cache the derived sender and contains
@@ -90,11 +91,21 @@ func Sender(signer Signer, tx *Transaction) (common.Address, error) {
 	return addr, nil
 }
 
+func ChildSender(signer Signer, tx *ChildBatch) (common.Address, error) {
+	addr, err := signer.ChildSender(tx)
+	if err != nil {
+		return common.Address{}, err
+	}
+	return addr, nil
+}
+
 // Signer encapsulates transaction signature handling. Note that this interface is not a
 // stable API and may change at any time to accommodate new protocol rules.
 type Signer interface {
 	// Sender returns the sender address of the transaction.
 	Sender(tx *Transaction) (common.Address, error)
+	// Sender returns the sender address of a child transaction.
+	ChildSender(tx *ChildBatch) (common.Address, error)
 	// SignatureValues returns the raw R, S, V values corresponding to the
 	// given signature.
 	SignatureValues(tx *Transaction, sig []byte) (r, s, v *big.Int, err error)
@@ -130,6 +141,24 @@ func (s EIP2718Signer) Sender(tx *Transaction) (common.Address, error) {
 	}
 
 	return recoverPlain(s.Hash(tx), R, S, V, true)
+}
+
+func (s EIP2718Signer) ChildSender(tx *ChildBatch) (common.Address, error) {
+	if tx.Chain.Cmp(s.chainId) != 0 {
+		return common.Address{}, ErrInvalidChainId
+	}
+
+	V, R, S := tx.RawSignatureValues()
+
+	hash := rlpHash([]interface{}{
+		tx.Type,
+		tx.Chain,
+		tx.AccountNonce,
+		tx.Txs,
+		tx.MaxPrice,
+	})
+
+	return recoverPlain(hash, R, S, V, true)
 }
 
 // SignatureValues returns signature values.
@@ -171,6 +200,15 @@ func (s EIP2718Signer) Hash(tx *Transaction) common.Hash {
 			tx.Data(),
 			tx.AccessList(),
 		})
+	} else if tx.typ == BatchTxId {
+		batch, _ := tx.ToBatch()
+		h = rlpHash([]interface{}{
+			tx.Type(),
+			tx.ChainId(),
+			tx.Nonce(),
+			tx.GasPrice(),
+			batch.Children,
+		})
 	}
 
 	return h
@@ -209,6 +247,10 @@ func (s EIP155Signer) Sender(tx *Transaction) (common.Address, error) {
 	V = new(big.Int).Sub(V, s.chainIdMul)
 	V.Sub(V, big8)
 	return recoverPlain(s.Hash(tx), R, S, V, true)
+}
+
+func (s EIP155Signer) ChildSender(tx *ChildBatch) (common.Address, error) {
+	return common.Address{}, ErrTxNotSupported
 }
 
 // SignatureValues returns signature values. This signature
@@ -259,6 +301,10 @@ func (hs HomesteadSigner) Sender(tx *Transaction) (common.Address, error) {
 	return recoverPlain(hs.Hash(tx), r, s, v, true)
 }
 
+func (hs HomesteadSigner) ChildSender(tx *ChildBatch) (common.Address, error) {
+	return common.Address{}, ErrTxNotSupported
+}
+
 type FrontierSigner struct{}
 
 func (s FrontierSigner) Equal(s2 Signer) bool {
@@ -294,6 +340,10 @@ func (fs FrontierSigner) Hash(tx *Transaction) common.Hash {
 func (fs FrontierSigner) Sender(tx *Transaction) (common.Address, error) {
 	v, r, s := tx.RawSignatureValues()
 	return recoverPlain(fs.Hash(tx), r, s, v, false)
+}
+
+func (fs FrontierSigner) ChildSender(tx *ChildBatch) (common.Address, error) {
+	return common.Address{}, ErrTxNotSupported
 }
 
 func recoverPlain(sighash common.Hash, R, S, Vb *big.Int, homestead bool) (common.Address, error) {

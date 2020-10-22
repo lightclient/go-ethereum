@@ -39,6 +39,7 @@ var (
 const (
 	LegacyTxId = iota
 	AccessListTxId
+	BatchTxId
 )
 
 type Transaction struct {
@@ -298,6 +299,11 @@ func (tx *Transaction) Cost() *big.Int {
 	return total
 }
 func (tx *Transaction) RawSignatureValues() (v, r, s *big.Int) { return tx.inner.RawSignatureValues() }
+
+func (tx *Transaction) ToBatch() (*BatchTransaction, bool) {
+	batch, ok := tx.inner.(*BatchTransaction)
+	return batch, ok
+}
 
 // Transactions is a Transaction slice type for basic sorting.
 type Transactions []*Transaction
