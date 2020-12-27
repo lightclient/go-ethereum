@@ -47,7 +47,7 @@ type Config struct {
 type Interpreter interface {
 	// Run loops and evaluates the contract's code with the given input data and returns
 	// the return byte-slice and an error if one occurred.
-	Run(contract *Contract, input []byte, static bool) ([]byte, error)
+	Run(contract *Contract, input []byte, static, indestructible bool) ([]byte, error)
 	// CanRun tells if the contract, passed as an argument, can be
 	// run by the current interpreter. This is meant so that the
 	// caller can do something like:
@@ -87,8 +87,9 @@ type EVMInterpreter struct {
 	hasher    keccakState // Keccak256 hasher instance shared across opcodes
 	hasherBuf common.Hash // Keccak256 hasher result array shared aross opcodes
 
-	readOnly   bool   // Whether to throw on stateful modifications
-	returnData []byte // Last CALL's return data for subsequent reuse
+	readOnly       bool   // Whether to throw on stateful modifications
+	indestructible bool   // Whether contract can call opcode SELFDESTRUCT (0xFF)
+	returnData     []byte // Last CALL's return data for subsequent reuse
 }
 
 // NewEVMInterpreter returns a new instance of the Interpreter.
@@ -138,7 +139,7 @@ func NewEVMInterpreter(evm *EVM, cfg Config) *EVMInterpreter {
 // It's important to note that any errors returned by the interpreter should be
 // considered a revert-and-consume-all-gas operation except for
 // ErrExecutionReverted which means revert-and-keep-gas-left.
-func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (ret []byte, err error) {
+func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool, indestructible bool) (ret []byte, err error) {
 
 	// Increment the call depth which is restricted to 1024
 	in.evm.depth++
@@ -149,6 +150,13 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 	if readOnly && !in.readOnly {
 		in.readOnly = true
 		defer func() { in.readOnly = false }()
+	}
+
+	// Make sure indestructible is only set if we aren't in indestructible yet.
+	// This makes also sure that the indestructible flag isn't removed for child calls.
+	if indestructible && !in.indestructible {
+		in.indestructible = true
+		defer func() { in.indestructible = false }()
 	}
 
 	// Reset the previous call's return data. It's unimportant to preserve the old buffer
@@ -239,6 +247,11 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 			// return with an error.
 			if operation.writes || (op == CALL && stack.Back(2).Sign() != 0) {
 				return nil, ErrWriteProtection
+			}
+		}
+		if in.indestructible {
+			if operation.selfdestructs {
+				return nil, ErrContractIndestructible
 			}
 		}
 		// Static portion of gas
