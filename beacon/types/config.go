@@ -121,7 +121,6 @@ func (c *ChainConfig) AddFork(name string, epoch uint64, version []byte) *ChainC
 
 	c.Forks = append(c.Forks, fork)
 	sort.Sort(c.Forks)
-
 	return c
 }
 
