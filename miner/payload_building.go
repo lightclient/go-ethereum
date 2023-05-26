@@ -101,7 +101,6 @@ func (payload *Payload) update(block *types.Block, fees *big.Int, sidecars []*ty
 		payload.full = block
 		payload.fullFees = fees
 		payload.sidecars = sidecars
-
 		feesInEther := new(big.Float).Quo(new(big.Float).SetInt(fees), big.NewFloat(params.Ether))
 		log.Info("Updated payload", "id", payload.id, "number", block.NumberU64(), "hash", block.Hash(),
 			"txs", len(block.Transactions()), "withdrawals", len(block.Withdrawals()), "gas", block.GasUsed(),
