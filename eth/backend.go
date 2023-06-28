@@ -23,6 +23,7 @@ import (
 	"math/big"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
@@ -71,8 +72,8 @@ type Ethereum struct {
 
 	blockchain         *core.BlockChain
 	handler            *handler
-	ethDialCandidates  enode.Iterator
-	snapDialCandidates enode.Iterator
+	ethDialCandidates  *enode.FairMix
+	snapDialCandidates *enode.FairMix
 	merger             *consensus.Merger
 
 	// DB interfaces
@@ -145,20 +146,22 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		return nil, err
 	}
 	eth := &Ethereum{
-		config:            config,
-		merger:            consensus.NewMerger(chainDb),
-		chainDb:           chainDb,
-		eventMux:          stack.EventMux(),
-		accountManager:    stack.AccountManager(),
-		engine:            engine,
-		closeBloomHandler: make(chan struct{}),
-		networkID:         config.NetworkId,
-		gasPrice:          config.Miner.GasPrice,
-		etherbase:         config.Miner.Etherbase,
-		bloomRequests:     make(chan chan *bloombits.Retrieval),
-		bloomIndexer:      core.NewBloomIndexer(chainDb, params.BloomBitsBlocks, params.BloomConfirms),
-		p2pServer:         stack.Server(),
-		shutdownTracker:   shutdowncheck.NewShutdownTracker(chainDb),
+		config:             config,
+		ethDialCandidates:  enode.NewFairMix(5 * time.Second),
+		snapDialCandidates: enode.NewFairMix(5 * time.Second),
+		merger:             consensus.NewMerger(chainDb),
+		chainDb:            chainDb,
+		eventMux:           stack.EventMux(),
+		accountManager:     stack.AccountManager(),
+		engine:             engine,
+		closeBloomHandler:  make(chan struct{}),
+		networkID:          config.NetworkId,
+		gasPrice:           config.Miner.GasPrice,
+		etherbase:          config.Miner.Etherbase,
+		bloomRequests:      make(chan chan *bloombits.Retrieval),
+		bloomIndexer:       core.NewBloomIndexer(chainDb, params.BloomBitsBlocks, params.BloomConfirms),
+		p2pServer:          stack.Server(),
+		shutdownTracker:    shutdowncheck.NewShutdownTracker(chainDb),
 	}
 
 	bcVersion := rawdb.ReadDatabaseVersion(chainDb)
@@ -246,15 +249,29 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, gpoParams)
 
-	// Setup DNS discovery iterators.
-	dnsclient := dnsdisc.NewClient(dnsdisc.Config{})
-	eth.ethDialCandidates, err = dnsclient.NewIterator(eth.config.EthDiscoveryURLs...)
-	if err != nil {
-		return nil, err
-	}
-	eth.snapDialCandidates, err = dnsclient.NewIterator(eth.config.SnapDiscoveryURLs...)
-	if err != nil {
-		return nil, err
+	// Configure discovery for eth and snap protocols.
+	if !eth.p2pServer.Config.NoDiscovery {
+		// Add DNS discovery iterators.
+		dnsclient := dnsdisc.NewClient(dnsdisc.Config{})
+		if len(eth.config.EthDiscoveryURLs) != 0 {
+			it, err := dnsclient.NewIterator(eth.config.EthDiscoveryURLs...)
+			if err != nil {
+				return nil, err
+			}
+			eth.ethDialCandidates.AddSource(it)
+		}
+		if len(eth.config.SnapDiscoveryURLs) != 0 {
+			it, err := dnsclient.NewIterator(eth.config.SnapDiscoveryURLs...)
+			if err != nil {
+				return nil, err
+			}
+			eth.snapDialCandidates.AddSource(it)
+		}
+		// Add discv5 discovery iterators.
+		if eth.p2pServer.Config.DiscoveryV5 {
+			eth.ethDialCandidates.AddSource(eth.p2pServer.DiscV5.RandomNodes())
+			eth.snapDialCandidates.AddSource(eth.p2pServer.DiscV5.RandomNodes())
+		}
 	}
 
 	// Start the RPC service
