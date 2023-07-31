@@ -452,7 +452,8 @@ func testGetSealingWork(t *testing.T, chainConfig *params.ChainConfig, engine co
 
 	// This API should work even when the automatic sealing is not enabled
 	for _, c := range cases {
-		block, _, _, err := w.getSealingBlock(c.parent, timestamp, c.coinbase, c.random, nil, false)
+		args := &BuildPayloadArgs{Parent: c.parent, Timestamp: timestamp, FeeRecipient: c.coinbase, Random: c.random}
+		block, _, _, err := w.getSealingBlock(args, false)
 		if c.expectErr {
 			if err == nil {
 				t.Error("Expect error but get nil")
@@ -468,7 +469,8 @@ func testGetSealingWork(t *testing.T, chainConfig *params.ChainConfig, engine co
 	// This API should work even when the automatic sealing is enabled
 	w.start()
 	for _, c := range cases {
-		block, _, _, err := w.getSealingBlock(c.parent, timestamp, c.coinbase, c.random, nil, false)
+		args := &BuildPayloadArgs{Parent: c.parent, Timestamp: timestamp, FeeRecipient: c.coinbase, Random: c.random}
+		block, _, _, err := w.getSealingBlock(args, false)
 		if c.expectErr {
 			if err == nil {
 				t.Error("Expect error but get nil")

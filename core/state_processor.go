@@ -66,7 +66,6 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		blockNumber = block.Number()
 		allLogs     []*types.Log
 		gp          = new(GasPool).AddGas(block.GasLimit())
-		beaconRoot  *common.Hash
 	)
 	// Mutate the block and state according to any hard-fork specs
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
@@ -77,7 +76,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		vmenv   = vm.NewEVM(context, vm.TxContext{}, statedb, p.config, cfg)
 		signer  = types.MakeSigner(p.config, header.Number, header.Time)
 	)
-	if beaconRoot != nil {
+	if header.BeaconRoot != nil {
 		// If EIP-4788 is enabled, we need to invoke the beaconroot storage contract with
 		// the new root
 		// TODO: Right now, I set the GasXX fields to 0. If this does not work,
@@ -89,7 +88,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 			GasFeeCap: new(big.Int).SetUint64(0), // TODO use basefee?
 			GasTipCap: new(big.Int).SetUint64(0), // TODO use zero?
 			To:        &params.BeaconRootsStorageAddress,
-			Data:      (*beaconRoot)[:], // TODO use 4byte invocation?
+			Data:      (*header.BeaconRoot)[:], // TODO use 4byte invocation?
 		}
 		vmenv.Reset(NewEVMTxContext(msg), statedb)
 		statedb.AddAddressToAccessList(params.BeaconRootsStorageAddress)
