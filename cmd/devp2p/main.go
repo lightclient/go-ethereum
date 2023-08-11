@@ -52,6 +52,7 @@ func init() {
 		dnsCommand,
 		nodesetCommand,
 		rlpxCommand,
+		forkidCommand,
 	}
 }
 
