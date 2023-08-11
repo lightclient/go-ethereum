@@ -87,6 +87,7 @@ type ExecutionPayloadEnvelope struct {
 	ExecutionPayload *ExecutableData `json:"executionPayload"  gencodec:"required"`
 	BlockValue       *big.Int        `json:"blockValue"  gencodec:"required"`
 	BlobsBundle      *BlobsBundleV1  `json:"blobsBundle"`
+	Override         bool            `json:"shouldOverrideBuilder"`
 }
 
 type BlobsBundleV1 struct {
@@ -268,7 +269,7 @@ func BlockToExecutableData(block *types.Block, fees *big.Int, blobs []kzg4844.Bl
 		blobsBundle.Commitments = append(blobsBundle.Commitments, hexutil.Bytes(commitments[i][:]))
 		blobsBundle.Proofs = append(blobsBundle.Proofs, hexutil.Bytes(proofs[i][:]))
 	}
-	return &ExecutionPayloadEnvelope{ExecutionPayload: data, BlockValue: fees, BlobsBundle: &blobsBundle}
+	return &ExecutionPayloadEnvelope{ExecutionPayload: data, BlockValue: fees, BlobsBundle: &blobsBundle, Override: false}
 }
 
 // ExecutionPayloadBodyV1 is used in the response to GetPayloadBodiesByHashV1 and GetPayloadBodiesByRangeV1
