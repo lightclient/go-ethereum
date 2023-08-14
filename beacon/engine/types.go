@@ -225,6 +225,7 @@ func ExecutableDataToBlock(params ExecutableData, versionedHashes []common.Hash)
 		WithdrawalsHash: withdrawalsRoot,
 		ExcessBlobGas:   params.ExcessBlobGas,
 		BlobGasUsed:     params.BlobGasUsed,
+		// TODO BeaconRoot
 	}
 	block := types.NewBlockWithHeader(header).WithBody(txs, nil /* uncles */).WithWithdrawals(params.Withdrawals)
 	if block.Hash() != params.BlockHash {
@@ -254,6 +255,7 @@ func BlockToExecutableData(block *types.Block, fees *big.Int, sidecars []*types.
 		Withdrawals:   block.Withdrawals(),
 		BlobGasUsed:   block.BlobGasUsed(),
 		ExcessBlobGas: block.ExcessBlobGas(),
+		// TODO BeaconRoot
 	}
 	blobsBundle := BlobsBundleV1{
 		Commitments: make([]hexutil.Bytes, 0),

@@ -90,6 +90,9 @@ type Header struct {
 
 	// ExcessBlobGas was added by EIP-4844 and is ignored in legacy headers.
 	ExcessBlobGas *uint64 `json:"excessBlobGas" rlp:"optional"`
+
+	// BeaconRoot was added by EIP-4788 and is ignored in legacy headers.
+	BeaconRoot *common.Hash `json:"parentBeaconBlockRoot" rlp:"optional"`
 }
 
 // field type overrides for gencodec
@@ -296,6 +299,10 @@ func CopyHeader(h *Header) *Header {
 	if h.BlobGasUsed != nil {
 		cpy.BlobGasUsed = new(uint64)
 		*cpy.BlobGasUsed = *h.BlobGasUsed
+	}
+	if h.BeaconRoot != nil {
+		cpy.BeaconRoot = new(common.Hash)
+		*cpy.BeaconRoot = *h.BeaconRoot
 	}
 	return &cpy
 }

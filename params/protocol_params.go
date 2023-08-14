@@ -16,7 +16,11 @@
 
 package params
 
-import "math/big"
+import (
+	"math/big"
+
+	"github.com/ethereum/go-ethereum/common"
+)
 
 const (
 	GasLimitBoundDivisor uint64 = 1024               // The bound divisor of the gas limit, used in update calculations.
@@ -179,4 +183,7 @@ var (
 	GenesisDifficulty      = big.NewInt(131072) // Difficulty of the Genesis block.
 	MinimumDifficulty      = big.NewInt(131072) // The minimum that the difficulty may ever be.
 	DurationLimit          = big.NewInt(13)     // The decision boundary on the blocktime duration used to determine whether difficulty should go up or not.
+
+	BeaconRootsStorageAddress common.Address = common.BytesToAddress([]byte{0xb}) // Address where historical beacon roots are stored as per EIP-4788
+	SystemAddress             common.Address = common.Address{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe}
 )
