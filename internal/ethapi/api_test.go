@@ -46,14 +46,17 @@ import (
 	"github.com/ethereum/go-ethereum/internal/blocktest"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/slices"
 )
 
 func TestTransaction_RoundTripRpcJSON(t *testing.T) {
+	config := params.AllEthashProtocolChanges
+	cancun := uint64(0)
+	config.CancunTime = &cancun
 	var (
-		config = params.AllEthashProtocolChanges
 		signer = types.LatestSigner(config)
 		key, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		tests  = allTransactionTypes(common.Address{0xde, 0xad}, config)
@@ -69,7 +72,7 @@ func TestTransaction_RoundTripRpcJSON(t *testing.T) {
 		if data, err := json.Marshal(tx); err != nil {
 			t.Fatalf("test %d: marshalling failed; %v", i, err)
 		} else if err = tx2.UnmarshalJSON(data); err != nil {
-			t.Fatalf("test %d: sunmarshal failed: %v", i, err)
+			t.Fatalf("test %d: unmarshal failed: %v, data: %s", i, err, string(data))
 		} else if want, have := tx.Hash(), tx2.Hash(); want != have {
 			t.Fatalf("test %d: stx changed, want %x have %x", i, want, have)
 		}
@@ -334,6 +337,47 @@ func allTransactionTypes(addr common.Address, config *params.ChainConfig) []txDa
 				"r": "0x6446b8a682db7e619fc6b4f6d1f708f6a17351a41c7fbd63665f469bc78b41b9",
 				"s": "0x7626abc15834f391a117c63450047309dbf84c5ce3e8e609b607062641e2de43",
 				"yParity": "0x0"
+			}`,
+		}, {
+			Tx: &types.BlobTx{
+				ChainID:    uint256.NewInt(1337),
+				Nonce:      1,
+				GasTipCap:  uint256.NewInt(1000000000),
+				GasFeeCap:  uint256.NewInt(30000000000),
+				Gas:        100000,
+				To:         common.Address{0xaa},
+				Value:      nil,
+				Data:       nil,
+				AccessList: types.AccessList{},
+				BlobFeeCap: uint256.NewInt(42),
+				BlobHashes: []common.Hash{{0x42}},
+				V:          uint256.NewInt(1),
+				R:          uint256.NewInt(10),
+				S:          uint256.NewInt(11),
+			},
+			Want: `{
+				"blockHash": null,
+				"blockNumber": null,
+				"from": "0x71562b71999873db5b286df957af199ec94617f7",
+			        "gas": "0x186a0",
+			        "gasPrice": "0x6fc23ac00",
+			        "maxFeePerGas": "0x6fc23ac00",
+			        "maxPriorityFeePerGas": "0x3b9aca00",
+			        "maxFeePerBlobGas": "0x2a",
+			        "hash": "0xd0cb047210ee57c6a207ec0c18066de9651d85a290c4e0790d1dda12f8b5699e",
+			        "input": "0x",
+			        "nonce": "0x1",
+			        "to": "0xaa00000000000000000000000000000000000000",
+			        "transactionIndex": null,
+                                "value": "0x0",
+			        "type": "0x3",
+			        "accessList": [],
+			        "chainId": "0x539",
+			        "blobVersionedHashes": ["0x4200000000000000000000000000000000000000000000000000000000000000"],
+			        "v":"0x0",
+			        "r": "0xf37bff72a8ed4cf33e2c8625f7372d8a4a8bd4e45d2ae04ccf4e08ca52e4f255",
+			        "s": "0x5bbba7f1b9cd856680c02a1e53e378635728877744b6b207c40b3cda2263563",
+			        "yParity":"0x0"
 			}`,
 		},
 	}
