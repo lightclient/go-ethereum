@@ -759,7 +759,7 @@ func (w *worker) commitTransaction(env *environment, tx *types.Transaction) ([]*
 		env.gasPool.SetGas(gp)
 		return nil, err
 	}
-	env.txs = append(env.txs, tx)
+	env.txs = append(env.txs, tx.WithoutBlobTxSidecar())
 	env.receipts = append(env.receipts, receipt)
 
 	if tx.Type() == types.BlobTxType {
