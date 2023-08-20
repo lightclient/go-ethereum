@@ -208,6 +208,11 @@ const (
 	LOG4
 )
 
+// 0xc0 range - speciality ops.
+const (
+	SETREVENUERECIPIENT = 0x0c0
+)
+
 // 0xf0 range - closures.
 const (
 	CREATE       OpCode = 0xf0

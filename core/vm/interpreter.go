@@ -56,6 +56,8 @@ func NewEVMInterpreter(evm *EVM) *EVMInterpreter {
 	// If jump table was not initialised we set the default one.
 	var table *JumpTable
 	switch {
+	case evm.chainRules.IsPrague:
+		table = &pragueInstructionSet
 	case evm.chainRules.IsCancun:
 		table = &cancunInstructionSet
 	case evm.chainRules.IsShanghai:
@@ -214,6 +216,11 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 			if err != nil || !contract.UseGas(dynamicCost) {
 				return nil, ErrOutOfGas
 			}
+			// record contract revenue
+			if operation.initCall {
+				gcost, _ := memoryGasCost(mem, memorySize)
+				in.evm.Revenue.AddGasUsed(contract.Address(), cost+gcost)
+			}
 			// Do tracing before memory expansion
 			if debug {
 				in.evm.Config.Tracer.CaptureState(pc, op, gasCopy, cost, callContext, in.returnData, in.evm.depth, err)
@@ -226,6 +233,9 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 			in.evm.Config.Tracer.CaptureState(pc, op, gasCopy, cost, callContext, in.returnData, in.evm.depth, err)
 			logged = true
 		}
+		if !operation.initCall {
+			in.evm.Revenue.AddGasUsed(contract.Address(), cost)
+		}
 		// execute the operation
 		res, err = operation.execute(&pc, in, callContext)
 		if err != nil {
@@ -236,6 +246,9 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 
 	if err == errStopToken {
 		err = nil // clear stop token error
+	} else if err == ErrOutOfGas {
+		// add in last bit of gas that caused OOG
+		in.evm.Revenue.AddGasUsed(contract.Address(), contract.Gas)
 	}
 
 	return res, err

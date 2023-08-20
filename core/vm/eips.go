@@ -37,6 +37,7 @@ var activators = map[int]func(*JumpTable){
 	1884: enable1884,
 	1344: enable1344,
 	1153: enable1153,
+	6968: enable6968,
 }
 
 // EnableEIP enables the given EIP on the config.
@@ -301,5 +302,25 @@ func enable6780(jt *JumpTable) {
 		constantGas: params.SelfdestructGasEIP150,
 		minStack:    minStack(1, 0),
 		maxStack:    maxStack(1, 0),
+	}
+}
+
+// opSetRevenueRecipient implements the SETREVENUERECIPIENT instruction.
+func opSetRevenueRecipient(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byte, error) {
+	var (
+		val       = scope.Stack.pop()
+		recipient = common.BytesToAddress(val.Bytes())
+	)
+	interpreter.evm.Revenue.SetRecipient(scope.Contract.Address(), recipient)
+	return nil, nil
+}
+
+// enable6968 EIP-6968 applies EIP-6968 contract secured revenue.
+func enable6968(jt *JumpTable) {
+	jt[SETREVENUERECIPIENT] = &operation{
+		execute:     opSetRevenueRecipient,
+		constantGas: GasFastestStep,
+		minStack:    minStack(1, 0),
+		maxStack:    maxStack(0, 0),
 	}
 }

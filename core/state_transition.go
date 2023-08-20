@@ -438,6 +438,15 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 		st.state.AddBalance(st.evm.Context.Coinbase, fee)
 	}
 
+	if rules.IsPrague {
+		// Pay out accrued revenue.
+		for _, entry := range st.evm.Revenue.Entries() {
+			amt := entry.Amount * (st.evm.Context.BaseFee.Uint64() / 5)
+			fmt.Printf("paying out to %s, amt %d\n", entry.Recipient.Hex(), amt)
+			st.state.AddBalance(entry.Recipient, big.NewInt(int64(amt)))
+		}
+	}
+
 	return &ExecutionResult{
 		UsedGas:    st.gasUsed(),
 		Err:        vmerr,

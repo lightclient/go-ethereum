@@ -120,6 +120,9 @@ type EVM struct {
 	// available gas is calculated in gasCall* according to the 63/64 rule and later
 	// applied in opCall*.
 	callGasTemp uint64
+
+	// tracks accured contract revenue
+	Revenue *RevenueTracker
 }
 
 // NewEVM returns a new EVM. The returned EVM is not thread safe and should
@@ -142,6 +145,7 @@ func NewEVM(blockCtx BlockContext, txCtx TxContext, statedb StateDB, chainConfig
 func (evm *EVM) Reset(txCtx TxContext, statedb StateDB) {
 	evm.TxContext = txCtx
 	evm.StateDB = statedb
+	evm.Revenue = &RevenueTracker{table: make(map[common.Address]*RevenueEntry)}
 }
 
 // Cancel cancels any running EVM operation. This may be called concurrently and

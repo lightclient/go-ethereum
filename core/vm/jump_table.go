@@ -42,6 +42,9 @@ type operation struct {
 
 	// memorySize returns the memory size required for the operation
 	memorySize memorySizeFunc
+
+	// initCall is true if the operation initializes a new call frame
+	initCall bool
 }
 
 var (
@@ -57,6 +60,7 @@ var (
 	mergeInstructionSet            = newMergeInstructionSet()
 	shanghaiInstructionSet         = newShanghaiInstructionSet()
 	cancunInstructionSet           = newCancunInstructionSet()
+	pragueInstructionSet           = newPragueInstructionSet()
 )
 
 // JumpTable contains the EVM opcodes supported at a given fork.
@@ -78,6 +82,12 @@ func validate(jt JumpTable) JumpTable {
 		}
 	}
 	return jt
+}
+
+func newPragueInstructionSet() JumpTable {
+	instructionSet := newCancunInstructionSet()
+	enable6968(&instructionSet) // EIP-6968 Contract Secured Revenue
+	return validate(instructionSet)
 }
 
 func newCancunInstructionSet() JumpTable {
@@ -187,6 +197,7 @@ func newByzantiumInstructionSet() JumpTable {
 		minStack:    minStack(6, 1),
 		maxStack:    maxStack(6, 1),
 		memorySize:  memoryStaticCall,
+		initCall:    true,
 	}
 	instructionSet[RETURNDATASIZE] = &operation{
 		execute:     opReturnDataSize,
@@ -243,6 +254,7 @@ func newHomesteadInstructionSet() JumpTable {
 		minStack:    minStack(6, 1),
 		maxStack:    maxStack(6, 1),
 		memorySize:  memoryDelegateCall,
+		initCall:    true,
 	}
 	return validate(instructionSet)
 }
@@ -1029,6 +1041,7 @@ func newFrontierInstructionSet() JumpTable {
 			minStack:    minStack(7, 1),
 			maxStack:    maxStack(7, 1),
 			memorySize:  memoryCall,
+			initCall:    true,
 		},
 		CALLCODE: {
 			execute:     opCallCode,
@@ -1037,6 +1050,7 @@ func newFrontierInstructionSet() JumpTable {
 			minStack:    minStack(7, 1),
 			maxStack:    maxStack(7, 1),
 			memorySize:  memoryCall,
+			initCall:    true,
 		},
 		RETURN: {
 			execute:    opReturn,

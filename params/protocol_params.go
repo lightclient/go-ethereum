@@ -174,6 +174,8 @@ const (
 
 	BlobTxTargetBlobGasPerBlock = 3 * BlobTxBlobGasPerBlob // Target consumable blob gas for data blobs per block (for 1559-like pricing)
 	MaxBlobGasPerBlock          = 6 * BlobTxBlobGasPerBlob // Maximum consumable blob gas for data blobs per block
+
+	RevenueShareQuotient // EIP-6968 revenue share quotient
 )
 
 // Gas discount table for BLS12-381 G1 and G2 multi exponentiation operations
