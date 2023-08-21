@@ -23,21 +23,17 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/enr"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie"
 )
 
 const (
 	// softResponseLimit is the target maximum size of replies to data retrievals.
 	softResponseLimit = 2 * 1024 * 1024
-
-	// estHeaderSize is the approximate size of an RLP encoded block header.
-	estHeaderSize = 500
 
 	// maxHeadersServe is the maximum number of block headers to serve. This number
 	// is there to limit the number of disk lookups.
@@ -69,9 +65,6 @@ type Backend interface {
 	// Chain retrieves the blockchain object to serve data.
 	Chain() *core.BlockChain
 
-	// StateBloom retrieves the bloom filter - if any - for state trie nodes.
-	StateBloom() *trie.SyncBloom
-
 	// TxPool retrieves the transaction pool object to serve data.
 	TxPool() TxPool
 
@@ -96,8 +89,8 @@ type Backend interface {
 
 // TxPool defines the methods needed by the protocol handler to serve transactions.
 type TxPool interface {
-	// Get retrieves the the transaction from the local txpool with the given hash.
-	Get(hash common.Hash) *types.Transaction
+	// Get retrieves the transaction from the local txpool with the given hash.
+	Get(hash common.Hash) *txpool.Transaction
 }
 
 // MakeProtocols constructs the P2P protocol definitions for `eth`.
@@ -134,7 +127,7 @@ func MakeProtocols(backend Backend, network uint64, dnsdisc enode.Iterator) []p2
 // NodeInfo represents a short summary of the `eth` sub-protocol metadata
 // known about the host peer.
 type NodeInfo struct {
-	Network    uint64              `json:"network"`    // Ethereum network ID (1=Frontier, 2=Morden, Ropsten=3, Rinkeby=4)
+	Network    uint64              `json:"network"`    // Ethereum network ID (1=Mainnet, Goerli=5)
 	Difficulty *big.Int            `json:"difficulty"` // Total difficulty of the host's blockchain
 	Genesis    common.Hash         `json:"genesis"`    // SHA3 hash of the host's genesis block
 	Config     *params.ChainConfig `json:"config"`     // Chain configuration for the fork rules
@@ -144,12 +137,14 @@ type NodeInfo struct {
 // nodeInfo retrieves some `eth` protocol metadata about the running host node.
 func nodeInfo(chain *core.BlockChain, network uint64) *NodeInfo {
 	head := chain.CurrentBlock()
+	hash := head.Hash()
+
 	return &NodeInfo{
 		Network:    network,
-		Difficulty: chain.GetTd(head.Hash(), head.NumberU64()),
+		Difficulty: chain.GetTd(hash, head.Number.Uint64()),
 		Genesis:    chain.Genesis().Hash(),
 		Config:     chain.Config(),
-		Head:       head.Hash(),
+		Head:       hash,
 	}
 }
 
@@ -171,39 +166,51 @@ type Decoder interface {
 	Time() time.Time
 }
 
-var eth65 = map[uint64]msgHandler{
-	GetBlockHeadersMsg:            handleGetBlockHeaders,
-	BlockHeadersMsg:               handleBlockHeaders,
-	GetBlockBodiesMsg:             handleGetBlockBodies,
-	BlockBodiesMsg:                handleBlockBodies,
-	GetNodeDataMsg:                handleGetNodeData,
-	NodeDataMsg:                   handleNodeData,
-	GetReceiptsMsg:                handleGetReceipts,
-	ReceiptsMsg:                   handleReceipts,
-	NewBlockHashesMsg:             handleNewBlockhashes,
-	NewBlockMsg:                   handleNewBlock,
-	TransactionsMsg:               handleTransactions,
-	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes,
-	GetPooledTransactionsMsg:      handleGetPooledTransactions,
-	PooledTransactionsMsg:         handlePooledTransactions,
-}
-
 var eth66 = map[uint64]msgHandler{
 	NewBlockHashesMsg:             handleNewBlockhashes,
 	NewBlockMsg:                   handleNewBlock,
 	TransactionsMsg:               handleTransactions,
-	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes,
-	// eth66 messages with request-id
-	GetBlockHeadersMsg:       handleGetBlockHeaders66,
-	BlockHeadersMsg:          handleBlockHeaders66,
-	GetBlockBodiesMsg:        handleGetBlockBodies66,
-	BlockBodiesMsg:           handleBlockBodies66,
-	GetNodeDataMsg:           handleGetNodeData66,
-	NodeDataMsg:              handleNodeData66,
-	GetReceiptsMsg:           handleGetReceipts66,
-	ReceiptsMsg:              handleReceipts66,
-	GetPooledTransactionsMsg: handleGetPooledTransactions66,
-	PooledTransactionsMsg:    handlePooledTransactions66,
+	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes66,
+	GetBlockHeadersMsg:            handleGetBlockHeaders66,
+	BlockHeadersMsg:               handleBlockHeaders66,
+	GetBlockBodiesMsg:             handleGetBlockBodies66,
+	BlockBodiesMsg:                handleBlockBodies66,
+	GetNodeDataMsg:                handleGetNodeData66,
+	NodeDataMsg:                   handleNodeData66,
+	GetReceiptsMsg:                handleGetReceipts66,
+	ReceiptsMsg:                   handleReceipts66,
+	GetPooledTransactionsMsg:      handleGetPooledTransactions66,
+	PooledTransactionsMsg:         handlePooledTransactions66,
+}
+
+var eth67 = map[uint64]msgHandler{
+	NewBlockHashesMsg:             handleNewBlockhashes,
+	NewBlockMsg:                   handleNewBlock,
+	TransactionsMsg:               handleTransactions,
+	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes66,
+	GetBlockHeadersMsg:            handleGetBlockHeaders66,
+	BlockHeadersMsg:               handleBlockHeaders66,
+	GetBlockBodiesMsg:             handleGetBlockBodies66,
+	BlockBodiesMsg:                handleBlockBodies66,
+	GetReceiptsMsg:                handleGetReceipts66,
+	ReceiptsMsg:                   handleReceipts66,
+	GetPooledTransactionsMsg:      handleGetPooledTransactions66,
+	PooledTransactionsMsg:         handlePooledTransactions66,
+}
+
+var eth68 = map[uint64]msgHandler{
+	NewBlockHashesMsg:             handleNewBlockhashes,
+	NewBlockMsg:                   handleNewBlock,
+	TransactionsMsg:               handleTransactions,
+	NewPooledTransactionHashesMsg: handleNewPooledTransactionHashes68,
+	GetBlockHeadersMsg:            handleGetBlockHeaders66,
+	BlockHeadersMsg:               handleBlockHeaders66,
+	GetBlockBodiesMsg:             handleGetBlockBodies66,
+	BlockBodiesMsg:                handleBlockBodies66,
+	GetReceiptsMsg:                handleGetReceipts66,
+	ReceiptsMsg:                   handleReceipts66,
+	GetPooledTransactionsMsg:      handleGetPooledTransactions66,
+	PooledTransactionsMsg:         handlePooledTransactions66,
 }
 
 // handleMessage is invoked whenever an inbound message is received from a remote
@@ -219,10 +226,14 @@ func handleMessage(backend Backend, peer *Peer) error {
 	}
 	defer msg.Discard()
 
-	var handlers = eth65
-	if peer.Version() >= ETH66 {
-		handlers = eth66
+	var handlers = eth66
+	if peer.Version() == ETH67 {
+		handlers = eth67
 	}
+	if peer.Version() >= ETH68 {
+		handlers = eth68
+	}
+
 	// Track the amount of time it takes to serve the request and run the handler
 	if metrics.Enabled {
 		h := fmt.Sprintf("%s/%s/%d/%#02x", p2p.HandleHistName, ProtocolName, peer.Version(), msg.Code)

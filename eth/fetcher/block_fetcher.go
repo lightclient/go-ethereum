@@ -26,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/prque"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/trie"
@@ -74,10 +75,10 @@ type HeaderRetrievalFn func(common.Hash) *types.Header
 type blockRetrievalFn func(common.Hash) *types.Block
 
 // headerRequesterFn is a callback type for sending a header retrieval request.
-type headerRequesterFn func(common.Hash) error
+type headerRequesterFn func(common.Hash, chan *eth.Response) (*eth.Request, error)
 
 // bodyRequesterFn is a callback type for sending a body retrieval request.
-type bodyRequesterFn func([]common.Hash) error
+type bodyRequesterFn func([]common.Hash, chan *eth.Response) (*eth.Request, error)
 
 // headerVerifierFn is a callback type to verify a block's header for fast propagation.
 type headerVerifierFn func(header *types.Header) error
@@ -174,9 +175,9 @@ type BlockFetcher struct {
 	completing map[common.Hash]*blockAnnounce   // Blocks with headers, currently body-completing
 
 	// Block cache
-	queue  *prque.Prque                         // Queue containing the import operations (block number sorted)
-	queues map[string]int                       // Per peer block counts to prevent memory exhaustion
-	queued map[common.Hash]*blockOrHeaderInject // Set of already queued blocks (to dedup imports)
+	queue  *prque.Prque[int64, *blockOrHeaderInject] // Queue containing the import operations (block number sorted)
+	queues map[string]int                            // Per peer block counts to prevent memory exhaustion
+	queued map[common.Hash]*blockOrHeaderInject      // Set of already queued blocks (to dedup imports)
 
 	// Callbacks
 	getHeader      HeaderRetrievalFn  // Retrieves a header from the local chain
@@ -211,7 +212,7 @@ func NewBlockFetcher(light bool, getHeader HeaderRetrievalFn, getBlock blockRetr
 		fetching:       make(map[common.Hash]*blockAnnounce),
 		fetched:        make(map[common.Hash][]*blockAnnounce),
 		completing:     make(map[common.Hash]*blockAnnounce),
-		queue:          prque.New(nil),
+		queue:          prque.New[int64, *blockOrHeaderInject](nil),
 		queues:         make(map[string]int),
 		queued:         make(map[common.Hash]*blockOrHeaderInject),
 		getHeader:      getHeader,
@@ -350,7 +351,7 @@ func (f *BlockFetcher) loop() {
 		// Import any queued blocks that could potentially fit
 		height := f.chainHeight()
 		for !f.queue.Empty() {
-			op := f.queue.PopItem().(*blockOrHeaderInject)
+			op := f.queue.PopItem()
 			hash := op.hash()
 			if f.queueChangeHook != nil {
 				f.queueChangeHook(hash, false)
@@ -391,13 +392,14 @@ func (f *BlockFetcher) loop() {
 				blockAnnounceDOSMeter.Mark(1)
 				break
 			}
+			if notification.number == 0 {
+				break
+			}
 			// If we have a valid block number, check that it's potentially useful
-			if notification.number > 0 {
-				if dist := int64(notification.number) - int64(f.chainHeight()); dist < -maxUncleDist || dist > maxQueueDist {
-					log.Debug("Peer discarded announcement", "peer", notification.origin, "number", notification.number, "hash", notification.hash, "distance", dist)
-					blockAnnounceDropMeter.Mark(1)
-					break
-				}
+			if dist := int64(notification.number) - int64(f.chainHeight()); dist < -maxUncleDist || dist > maxQueueDist {
+				log.Debug("Peer discarded announcement", "peer", notification.origin, "number", notification.number, "hash", notification.hash, "distance", dist)
+				blockAnnounceDropMeter.Mark(1)
+				break
 			}
 			// All is well, schedule the announce if block's not yet downloading
 			if _, ok := f.fetching[notification.hash]; ok {
@@ -460,15 +462,39 @@ func (f *BlockFetcher) loop() {
 
 				// Create a closure of the fetch and schedule in on a new thread
 				fetchHeader, hashes := f.fetching[hashes[0]].fetchHeader, hashes
-				go func() {
+				go func(peer string) {
 					if f.fetchingHook != nil {
 						f.fetchingHook(hashes)
 					}
 					for _, hash := range hashes {
 						headerFetchMeter.Mark(1)
-						fetchHeader(hash) // Suboptimal, but protocol doesn't allow batch header retrievals
+						go func(hash common.Hash) {
+							resCh := make(chan *eth.Response)
+
+							req, err := fetchHeader(hash, resCh)
+							if err != nil {
+								return // Legacy code, yolo
+							}
+							defer req.Close()
+
+							timeout := time.NewTimer(2 * fetchTimeout) // 2x leeway before dropping the peer
+							defer timeout.Stop()
+
+							select {
+							case res := <-resCh:
+								res.Done <- nil
+								f.FilterHeaders(peer, *res.Res.(*eth.BlockHeadersPacket), time.Now().Add(res.Time))
+
+							case <-timeout.C:
+								// The peer didn't respond in time. The request
+								// was already rescheduled at this point, we were
+								// waiting for a catchup. With an unresponsive
+								// peer however, it's a protocol violation.
+								f.dropPeer(peer)
+							}
+						}(hash)
 					}
-				}()
+				}(peer)
 			}
 			// Schedule the next fetch if blocks are still pending
 			f.rescheduleFetch(fetchTimer)
@@ -496,8 +522,36 @@ func (f *BlockFetcher) loop() {
 				if f.completingHook != nil {
 					f.completingHook(hashes)
 				}
+				fetchBodies := f.completing[hashes[0]].fetchBodies
 				bodyFetchMeter.Mark(int64(len(hashes)))
-				go f.completing[hashes[0]].fetchBodies(hashes)
+
+				go func(peer string, hashes []common.Hash) {
+					resCh := make(chan *eth.Response)
+
+					req, err := fetchBodies(hashes, resCh)
+					if err != nil {
+						return // Legacy code, yolo
+					}
+					defer req.Close()
+
+					timeout := time.NewTimer(2 * fetchTimeout) // 2x leeway before dropping the peer
+					defer timeout.Stop()
+
+					select {
+					case res := <-resCh:
+						res.Done <- nil
+						// Ignoring withdrawals here, since the block fetcher is not used post-merge.
+						txs, uncles, _ := res.Res.(*eth.BlockBodiesPacket).Unpack()
+						f.FilterBodies(peer, txs, uncles, time.Now())
+
+					case <-timeout.C:
+						// The peer didn't respond in time. The request
+						// was already rescheduled at this point, we were
+						// waiting for a catchup. With an unresponsive
+						// peer however, it's a protocol violation.
+						f.dropPeer(peer)
+					}
+				}(peer, hashes)
 			}
 			// Schedule the next fetch if blocks are still pending
 			f.rescheduleComplete(completeTimer)
@@ -545,7 +599,7 @@ func (f *BlockFetcher) loop() {
 						announce.time = task.time
 
 						// If the block is empty (header only), short circuit into the final import queue
-						if header.TxHash == types.EmptyRootHash && header.UncleHash == types.EmptyUncleHash {
+						if header.TxHash == types.EmptyTxsHash && header.UncleHash == types.EmptyUncleHash {
 							log.Trace("Block empty, skipping body retrieval", "peer", announce.origin, "number", header.Number, "hash", header.Hash())
 
 							block := types.NewBlockWithHeader(header)
@@ -638,7 +692,6 @@ func (f *BlockFetcher) loop() {
 						} else {
 							f.forgetHash(hash)
 						}
-
 					}
 					if matched {
 						task.transactions = append(task.transactions[:i], task.transactions[i+1:]...)
@@ -833,15 +886,17 @@ func (f *BlockFetcher) importBlocks(peer string, block *types.Block) {
 // internal state.
 func (f *BlockFetcher) forgetHash(hash common.Hash) {
 	// Remove all pending announces and decrement DOS counters
-	for _, announce := range f.announced[hash] {
-		f.announces[announce.origin]--
-		if f.announces[announce.origin] <= 0 {
-			delete(f.announces, announce.origin)
+	if announceMap, ok := f.announced[hash]; ok {
+		for _, announce := range announceMap {
+			f.announces[announce.origin]--
+			if f.announces[announce.origin] <= 0 {
+				delete(f.announces, announce.origin)
+			}
 		}
-	}
-	delete(f.announced, hash)
-	if f.announceChangeHook != nil {
-		f.announceChangeHook(hash, false)
+		delete(f.announced, hash)
+		if f.announceChangeHook != nil {
+			f.announceChangeHook(hash, false)
+		}
 	}
 	// Remove any pending fetches and decrement the DOS counters
 	if announce := f.fetching[hash]; announce != nil {
