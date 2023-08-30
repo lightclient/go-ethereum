@@ -18,6 +18,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"os"
@@ -155,6 +156,19 @@ as the backend data source, making this command a lot faster.
 The argument is interpreted as block number or hash. If none is provided, the latest
 block is used.
 `,
+			},
+			{
+				Name:      "dump-slot0",
+				Usage:     "Dumps all slot 0 values for contracts.",
+				ArgsUsage: "[? <blockHash> | <blockNum>]",
+				Action:    dumpSlotZero,
+				Flags: flags.Merge([]cli.Flag{
+					utils.ExcludeCodeFlag,
+					utils.ExcludeStorageFlag,
+					utils.StartKeyFlag,
+					utils.DumpLimitFlag,
+					utils.StateSchemeFlag,
+				}, utils.NetworkFlags, utils.DatabasePathFlags),
 			},
 		},
 	}
@@ -629,5 +643,82 @@ func checkAccount(ctx *cli.Context) error {
 		return err
 	}
 	log.Info("Checked the snapshot journalled storage", "time", common.PrettyDuration(time.Since(start)))
+	return nil
+}
+
+func dumpSlotZero(ctx *cli.Context) error {
+	stack, _ := makeConfigNode(ctx)
+	defer stack.Close()
+
+	conf, db, root, err := parseDumpConfig(ctx, stack)
+	if err != nil {
+		return err
+	}
+	triedb := utils.MakeTrieDatabase(ctx, db, true, true)
+	defer triedb.Close()
+
+	stateTrie, err := trie.NewStateTrie(trie.TrieID(root), triedb)
+	if err != nil {
+		return err
+	}
+
+	snapConfig := snapshot.Config{
+		CacheSize:  256,
+		Recovery:   false,
+		NoBuild:    true,
+		AsyncBuild: false,
+	}
+	snaptree, err := snapshot.New(snapConfig, db, triedb, root)
+	if err != nil {
+		return err
+	}
+	statedb, err := state.New(root, state.NewDatabase(db), snaptree)
+	if err != nil {
+		return err
+	}
+	accIt, err := snaptree.AccountIterator(root, common.BytesToHash(conf.Start))
+	if err != nil {
+		return err
+	}
+	defer accIt.Release()
+
+	log.Info("Snapshot dumping started", "root", root)
+	var (
+		start    = time.Now()
+		logged   = time.Now()
+		accounts uint64
+	)
+
+	w := csv.NewWriter(os.Stdout)
+	w.Write([]string{"address", "slot0"})
+
+	for accIt.Next() {
+		account, err := types.FullAccount(accIt.Account())
+		if err != nil {
+			return err
+		}
+		accounts++
+
+		key := stateTrie.GetKey(accIt.Hash().Bytes())
+		if key == nil {
+			log.Warn("missing preimage", "key", accIt.Hash())
+			continue
+		}
+		addr := common.BytesToAddress(key)
+
+		// Skip accounts w/o code.
+		if bytes.Equal(account.CodeHash, types.EmptyCodeHash.Bytes()) {
+			continue
+		}
+		// Read slot 0.
+		val := statedb.GetState(addr, common.Hash{})
+		w.Write([]string{addr.Hex(), val.Hex()})
+		w.Flush()
+		if time.Since(logged) > 8*time.Second {
+			log.Info("Snapshot dumping in progress", "at", accIt.Hash(), "accounts", accounts, "elapsed", common.PrettyDuration(time.Since(start)))
+			logged = time.Now()
+		}
+	}
+	log.Info("Snapshot dumping complete", "accounts", accounts, "elapsed", common.PrettyDuration(time.Since(start)))
 	return nil
 }
