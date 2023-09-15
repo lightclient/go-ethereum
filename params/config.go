@@ -80,7 +80,7 @@ var (
 		TerminalTotalDifficulty:       big.NewInt(0),
 		TerminalTotalDifficultyPassed: true,
 		MergeNetsplitBlock:            nil,
-		ShanghaiTime:                  newUint64(1694790240),
+		ShanghaiTime:                  newUint64(1694884704),
 		CancunTime:                    newUint64(2000000000),
 		Ethash:                        new(EthashConfig),
 	}
