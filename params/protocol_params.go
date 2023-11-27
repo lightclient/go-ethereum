@@ -191,4 +191,7 @@ var (
 	WithdrawalRequestsAddress = common.HexToAddress("0x00A3ca265EBcb825B45F985A16CEFB49958cE017")
 	// SystemAddress is where the system-transaction is sent from as per EIP-4788
 	SystemAddress = common.HexToAddress("0xfffffffffffffffffffffffffffffffffffffffe")
+
+	// Magic prefix for EIP-3074 AUTH messages.
+	AuthMagic = byte(0x04)
 )

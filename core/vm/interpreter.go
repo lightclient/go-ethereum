@@ -38,9 +38,10 @@ type Config struct {
 // ScopeContext contains the things that are per-call, such as stack and memory,
 // but not transients like pc and gas
 type ScopeContext struct {
-	Memory   *Memory
-	Stack    *Stack
-	Contract *Contract
+	Memory     *Memory
+	Stack      *Stack
+	Contract   *Contract
+	Authorized *common.Address
 }
 
 // MemoryData returns the underlying memory slice. Callers must not modify the contents
@@ -99,6 +100,8 @@ func NewEVMInterpreter(evm *EVM) *EVMInterpreter {
 	// If jump table was not initialised we set the default one.
 	var table *JumpTable
 	switch {
+	case evm.chainRules.IsPrague:
+		table = &pragueInstructionSet
 	case evm.chainRules.IsCancun:
 		table = &cancunInstructionSet
 	case evm.chainRules.IsShanghai:
