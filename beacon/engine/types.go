@@ -35,6 +35,7 @@ var (
 	PayloadV1 PayloadVersion = 0x1
 	PayloadV2 PayloadVersion = 0x2
 	PayloadV3 PayloadVersion = 0x3
+	PayloadV4 PayloadVersion = 0x4
 )
 
 //go:generate go run github.com/fjl/gencodec -type PayloadAttributes -field-override payloadAttributesMarshaling -out gen_blockparams.go
@@ -75,6 +76,7 @@ type ExecutableData struct {
 	Withdrawals   []*types.Withdrawal `json:"withdrawals"`
 	BlobGasUsed   *uint64             `json:"blobGasUsed"`
 	ExcessBlobGas *uint64             `json:"excessBlobGas"`
+	Deposits      []*types.Deposit    `json:"depositReceipts"`
 }
 
 // JSON type overrides for executableData.
@@ -229,6 +231,11 @@ func ExecutableDataToBlock(params ExecutableData, versionedHashes []common.Hash,
 		h := types.DeriveSha(types.Withdrawals(params.Withdrawals), trie.NewStackTrie(nil))
 		withdrawalsRoot = &h
 	}
+	var depositsRoot *common.Hash
+	if params.Deposits != nil {
+		h := types.DeriveSha(types.Deposits(params.Deposits), trie.NewStackTrie(nil))
+		depositsRoot = &h
+	}
 	header := &types.Header{
 		ParentHash:       params.ParentHash,
 		UncleHash:        types.EmptyUncleHash,
@@ -249,8 +256,9 @@ func ExecutableDataToBlock(params ExecutableData, versionedHashes []common.Hash,
 		ExcessBlobGas:    params.ExcessBlobGas,
 		BlobGasUsed:      params.BlobGasUsed,
 		ParentBeaconRoot: beaconRoot,
+		DepositsHash:     depositsRoot,
 	}
-	block := types.NewBlockWithHeader(header).WithBody(types.Body{Transactions: txs, Uncles: nil, Withdrawals: params.Withdrawals})
+	block := types.NewBlockWithHeader(header).WithBody(types.Body{Transactions: txs, Uncles: nil, Withdrawals: params.Withdrawals, Deposits: params.Deposits})
 	if block.Hash() != params.BlockHash {
 		return nil, fmt.Errorf("blockhash mismatch, want %x, got %x", params.BlockHash, block.Hash())
 	}
@@ -278,6 +286,7 @@ func BlockToExecutableData(block *types.Block, fees *big.Int, sidecars []*types.
 		Withdrawals:   block.Withdrawals(),
 		BlobGasUsed:   block.BlobGasUsed(),
 		ExcessBlobGas: block.ExcessBlobGas(),
+		Deposits:      block.Deposits(),
 	}
 	bundle := BlobsBundleV1{
 		Commitments: make([]hexutil.Bytes, 0),
