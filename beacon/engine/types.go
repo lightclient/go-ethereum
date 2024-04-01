@@ -76,7 +76,7 @@ type ExecutableData struct {
 	Withdrawals   []*types.Withdrawal `json:"withdrawals"`
 	BlobGasUsed   *uint64             `json:"blobGasUsed"`
 	ExcessBlobGas *uint64             `json:"excessBlobGas"`
-	Deposits      []*types.Deposit    `json:"depositReceipts"`
+	Deposits      types.Deposits      `json:"depositRequests"`
 }
 
 // JSON type overrides for executableData.
@@ -231,10 +231,16 @@ func ExecutableDataToBlock(params ExecutableData, versionedHashes []common.Hash,
 		h := types.DeriveSha(types.Withdrawals(params.Withdrawals), trie.NewStackTrie(nil))
 		withdrawalsRoot = &h
 	}
-	var depositsRoot *common.Hash
+
+	var (
+		requestsHash *common.Hash
+		requests     types.Requests
+	)
 	if params.Deposits != nil {
-		h := types.DeriveSha(types.Deposits(params.Deposits), trie.NewStackTrie(nil))
-		depositsRoot = &h
+		requests = make(types.Requests, 0)
+		requests = append(requests, params.Deposits.Requests()...)
+		h := types.DeriveSha(requests, trie.NewStackTrie(nil))
+		requestsHash = &h
 	}
 	header := &types.Header{
 		ParentHash:       params.ParentHash,
@@ -256,9 +262,9 @@ func ExecutableDataToBlock(params ExecutableData, versionedHashes []common.Hash,
 		ExcessBlobGas:    params.ExcessBlobGas,
 		BlobGasUsed:      params.BlobGasUsed,
 		ParentBeaconRoot: beaconRoot,
-		DepositsHash:     depositsRoot,
+		RequestsHash:     requestsHash,
 	}
-	block := types.NewBlockWithHeader(header).WithBody(types.Body{Transactions: txs, Uncles: nil, Withdrawals: params.Withdrawals, Deposits: params.Deposits})
+	block := types.NewBlockWithHeader(header).WithBody(types.Body{Transactions: txs, Uncles: nil, Withdrawals: params.Withdrawals, Requests: requests})
 	if block.Hash() != params.BlockHash {
 		return nil, fmt.Errorf("blockhash mismatch, want %x, got %x", params.BlockHash, block.Hash())
 	}

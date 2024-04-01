@@ -18,8 +18,10 @@ package types
 
 import (
 	"bytes"
+	"encoding/binary"
 	"reflect"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -29,13 +31,14 @@ import (
 
 // Deposit contians EIP-6110 deposit data.
 type Deposit struct {
-	PublicKey             BLSPublicKey `json:"pubkey"`
-	WithdrawalCredentials common.Hash  `json:"withdrawalCredentials"`
-	Amount                uint64       `json:"amount"` // in gwei
-	Signature             BLSSignature `json:"signature"`
-	Index                 uint64       `json:"index"`
+	PublicKey             BLSPublicKey `json:"pubkey"`                // public key of validator
+	WithdrawalCredentials common.Hash  `json:"withdrawalCredentials"` // beneficiary of the validator funds
+	Amount                uint64       `json:"amount"`                // deposit size in Gwei
+	Signature             BLSSignature `json:"signature"`             // signature over deposit msg
+	Index                 uint64       `json:"index"`                 // deposit count value
 }
 
+// field type overrides for gencodec
 type depositMarshaling struct {
 	PublicKey             hexutil.Bytes
 	WithdrawalCredentials hexutil.Bytes
@@ -44,7 +47,16 @@ type depositMarshaling struct {
 	Index                 hexutil.Uint64
 }
 
-// Deposit implements DerivableList for withdrawals.
+// field type overrides for abi upacking
+type depositUnpacking struct {
+	Pubkey                []byte
+	WithdrawalCredentials []byte
+	Amount                []byte
+	Signature             []byte
+	Index                 []byte
+}
+
+// Deposits implements DerivableList for requests.
 type Deposits []*Deposit
 
 // Len returns the length of s.
@@ -53,6 +65,57 @@ func (s Deposits) Len() int { return len(s) }
 // EncodeIndex encodes the i'th deposit to s.
 func (s Deposits) EncodeIndex(i int, w *bytes.Buffer) {
 	rlp.Encode(w, s[i])
+}
+
+// Requests creates a deep copy of each deposit and returns a slice of Request
+// objects.
+func (s Deposits) Requests() (reqs Requests) {
+	for _, d := range s {
+		reqs = append(reqs, NewRequest(d))
+	}
+	return
+}
+
+var (
+	// DepositABI is an ABI instance of beacon chain deposit events.
+	DepositABI   = abi.ABI{Events: map[string]abi.Event{"DepositEvent": depositEvent}}
+	bytesT, _    = abi.NewType("bytes", "", nil)
+	depositEvent = abi.NewEvent("DepositEvent", "DepositEvent", false, abi.Arguments{
+		{Name: "pubkey", Type: bytesT, Indexed: false},
+		{Name: "withdrawal_credentials", Type: bytesT, Indexed: false},
+		{Name: "amount", Type: bytesT, Indexed: false},
+		{Name: "signature", Type: bytesT, Indexed: false},
+		{Name: "index", Type: bytesT, Indexed: false}},
+	)
+)
+
+// UnpackIntoDeposit unpacks a serialized DepositEvent.
+func UnpackIntoDeposit(data []byte) (*Deposit, error) {
+	var du depositUnpacking
+	if err := DepositABI.UnpackIntoInterface(&du, "DepositEvent", data); err != nil {
+		return nil, err
+	}
+	var d Deposit
+	copy(d.PublicKey[:], du.Pubkey)
+	copy(d.WithdrawalCredentials[:], du.WithdrawalCredentials)
+	d.Amount = binary.LittleEndian.Uint64(du.Amount)
+	copy(d.Signature[:], du.Signature)
+	d.Index = binary.LittleEndian.Uint64(du.Index)
+
+	return &d, nil
+}
+
+func (d *Deposit) requestType() byte            { return DepositRequestType }
+func (d *Deposit) encode(b *bytes.Buffer) error { return rlp.Encode(b, d) }
+func (d *Deposit) decode(input []byte) error    { return rlp.DecodeBytes(input, d) }
+func (d *Deposit) copy() RequestData {
+	return &Deposit{
+		PublicKey:             d.PublicKey,
+		WithdrawalCredentials: d.WithdrawalCredentials,
+		Amount:                d.Amount,
+		Signature:             d.Signature,
+		Index:                 d.Index,
+	}
 }
 
 // misc bls types
