@@ -216,7 +216,9 @@ func ProcessBeaconBlockRoot(beaconRoot common.Hash, vmenv *vm.EVM, statedb *stat
 // populate the whole buffer with block hashes.
 func InsertBlockHashHistoryAtEip2935Fork(statedb *state.StateDB, prevNumber uint64, prevHash common.Hash, chain consensus.ChainHeaderReader) {
 	ancestor := chain.GetHeader(prevHash, prevNumber)
-	// TODO: should this be i >= 0?
+	// TODO: to be clarified in the spec:
+	// Either we have to also persist genesis hash here or
+	// also exclude it in ProcessParentBlockHash below.
 	for i := prevNumber; i > 0 && i >= prevNumber-256; i-- {
 		ProcessParentBlockHash(statedb, i, ancestor.Hash())
 		ancestor = chain.GetHeader(ancestor.ParentHash, ancestor.Number.Uint64()-1)
