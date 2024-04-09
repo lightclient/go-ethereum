@@ -82,12 +82,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		ProcessBeaconBlockRoot(*beaconRoot, vmenv, statedb)
 	}
 	if p.config.IsPrague(block.Number(), block.Time()) {
-		parent := p.bc.GetBlockByHash(block.ParentHash())
-		if !p.config.IsPrague(parent.Number(), parent.Time()) {
-			InsertBlockHashHistoryAtEip2935Fork(statedb, block.NumberU64()-1, block.ParentHash(), p.bc)
-		} else {
-			ProcessParentBlockHash(statedb, block.NumberU64()-1, block.ParentHash())
-		}
+		ProcessBlockHashHistory(statedb, block.Header(), p.config, p.bc)
 	}
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
@@ -212,16 +207,28 @@ func ProcessBeaconBlockRoot(beaconRoot common.Hash, vmenv *vm.EVM, statedb *stat
 	statedb.Finalise(true)
 }
 
-// InsertBlockHashHistoryAtEip2935Fork is called once at the EIP-2935 fork block to
-// populate the whole buffer with block hashes.
-func InsertBlockHashHistoryAtEip2935Fork(statedb *state.StateDB, prevNumber uint64, prevHash common.Hash, chain consensus.ChainHeaderReader) {
-	ancestor := chain.GetHeader(prevHash, prevNumber)
-	// TODO: to be clarified in the spec:
-	// Either we have to also persist genesis hash here or
-	// also exclude it in ProcessParentBlockHash below.
-	for i := prevNumber; i > 0 && i >= prevNumber-256; i-- {
-		ProcessParentBlockHash(statedb, i, ancestor.Hash())
-		ancestor = chain.GetHeader(ancestor.ParentHash, ancestor.Number.Uint64()-1)
+// ProcessBlockHashHistory is called at every block to insert the parent block hash
+// in the history storage contract as per EIP-2935. At the EIP-2935 fork block, it
+// populates the whole buffer with block hashes.
+func ProcessBlockHashHistory(statedb *state.StateDB, header *types.Header, chainConfig *params.ChainConfig, chain consensus.ChainHeaderReader) {
+	var (
+		prevHash   = header.ParentHash
+		parent     = chain.GetHeaderByHash(prevHash)
+		prevNumber = parent.Number.Uint64()
+	)
+	ProcessParentBlockHash(statedb, prevNumber, prevHash)
+	// History already inserted.
+	if chainConfig.IsPrague(parent.Number, parent.Time) || prevNumber == 0 {
+		return
+	}
+	var low uint64
+	if prevNumber > 255 {
+		low = prevNumber - 255
+	}
+	for i := prevNumber - 1; i >= low; i-- {
+		prevHash = parent.ParentHash
+		parent = chain.GetHeader(prevHash, i)
+		ProcessParentBlockHash(statedb, i, prevHash)
 	}
 }
 

@@ -201,12 +201,7 @@ func (miner *Miner) prepareWork(genParams *generateParams) (*environment, error)
 		core.ProcessBeaconBlockRoot(*header.ParentBeaconRoot, vmenv, env.state)
 	}
 	if miner.chainConfig.IsPrague(header.Number, header.Time) {
-		parent := miner.chain.GetHeaderByNumber(header.Number.Uint64() - 1)
-		if !miner.chainConfig.IsPrague(parent.Number, parent.Time) {
-			core.InsertBlockHashHistoryAtEip2935Fork(env.state, header.Number.Uint64()-1, header.ParentHash, miner.chain)
-		} else {
-			core.ProcessParentBlockHash(env.state, header.Number.Uint64()-1, header.ParentHash)
-		}
+		core.ProcessBlockHashHistory(env.state, header, miner.chainConfig, miner.chain)
 	}
 	return env, nil
 }
