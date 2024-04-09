@@ -357,9 +357,9 @@ func opBlockhash2935(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContex
 
 func getBlockHashFromContract(number uint64, statedb StateDB) common.Hash {
 	ringIndex := number % 256
-	var pnum common.Hash
-	binary.BigEndian.PutUint64(pnum[24:], ringIndex)
+	var slot common.Hash
+	binary.BigEndian.PutUint64(slot[24:], ringIndex)
 	statedb.AddAddressToAccessList(params.HistoryStorageAddress)
-	statedb.AddSlotToAccessList(params.HistoryStorageAddress, pnum)
-	return statedb.GetState(params.HistoryStorageAddress, pnum)
+	statedb.AddSlotToAccessList(params.HistoryStorageAddress, slot)
+	return statedb.GetState(params.HistoryStorageAddress, slot)
 }
