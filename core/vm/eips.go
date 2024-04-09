@@ -17,7 +17,6 @@
 package vm
 
 import (
-	"encoding/binary"
 	"fmt"
 	"sort"
 
@@ -38,7 +37,6 @@ var activators = map[int]func(*JumpTable){
 	1884: enable1884,
 	1344: enable1344,
 	1153: enable1153,
-	2935: enable2935,
 }
 
 // EnableEIP enables the given EIP on the config.
@@ -320,46 +318,4 @@ func enable6780(jt *JumpTable) {
 		minStack:    minStack(1, 0),
 		maxStack:    maxStack(1, 0),
 	}
-}
-
-// enable2935 applies EIP-2935 (history contract for BLOCKHASH)
-func enable2935(jt *JumpTable) {
-	jt[BLOCKHASH] = &operation{
-		execute:     opBlockhash2935,
-		constantGas: GasExtStep,
-		minStack:    minStack(1, 1),
-		maxStack:    maxStack(1, 1),
-	}
-}
-
-func opBlockhash2935(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byte, error) {
-	num := scope.Stack.peek()
-	num64, overflow := num.Uint64WithOverflow()
-	if overflow {
-		num.Clear()
-		return nil, nil
-	}
-	var upper, lower uint64
-	upper = interpreter.evm.Context.BlockNumber.Uint64()
-	if upper < 257 {
-		lower = 0
-	} else {
-		lower = upper - 256
-	}
-	if num64 >= lower && num64 < upper {
-		hash := getBlockHashFromContract(num64, interpreter.evm.StateDB)
-		num.SetBytes(hash.Bytes())
-	} else {
-		num.Clear()
-	}
-	return nil, nil
-}
-
-func getBlockHashFromContract(number uint64, statedb StateDB) common.Hash {
-	ringIndex := number % 256
-	var slot common.Hash
-	binary.BigEndian.PutUint64(slot[24:], ringIndex)
-	statedb.AddAddressToAccessList(params.HistoryStorageAddress)
-	statedb.AddSlotToAccessList(params.HistoryStorageAddress, slot)
-	return statedb.GetState(params.HistoryStorageAddress, slot)
 }
