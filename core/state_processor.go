@@ -226,9 +226,8 @@ func ProcessBlockHashHistory(statedb *state.StateDB, header *types.Header, chain
 		low = prevNumber - 255
 	}
 	for i := prevNumber - 1; i >= low; i-- {
-		prevHash = parent.ParentHash
-		parent = chain.GetHeader(prevHash, i)
-		ProcessParentBlockHash(statedb, i, prevHash)
+		ProcessParentBlockHash(statedb, i, parent.ParentHash)
+		parent = chain.GetHeader(parent.ParentHash, i)
 	}
 }
 
