@@ -325,10 +325,10 @@ func enable6780(jt *JumpTable) {
 // enable2935 applies EIP-2935 (history contract for BLOCKHASH)
 func enable2935(jt *JumpTable) {
 	jt[BLOCKHASH] = &operation{
-		execute: opBlockhash2935,
-		// TODO: gas params
-		minStack: minStack(1, 1),
-		maxStack: maxStack(1, 1),
+		execute:     opBlockhash2935,
+		constantGas: GasExtStep,
+		minStack:    minStack(1, 1),
+		maxStack:    maxStack(1, 1),
 	}
 }
 
