@@ -609,6 +609,7 @@ func (api *ConsensusAPI) newPayload(params engine.ExecutableData, versionedHashe
 			"len(params.Transactions)", len(params.Transactions),
 			"len(params.Withdrawals)", len(params.Withdrawals),
 			"len(params.Deposits)", len(params.Deposits),
+			"len(params.WithdrawalRequests)", len(params.WithdrawalRequests),
 			"beaconRoot", beaconRoot,
 			"error", err)
 		return api.invalid(err, nil), nil
