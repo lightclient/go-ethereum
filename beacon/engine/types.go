@@ -59,24 +59,25 @@ type payloadAttributesMarshaling struct {
 
 // ExecutableData is the data necessary to execute an EL payload.
 type ExecutableData struct {
-	ParentHash    common.Hash         `json:"parentHash"    gencodec:"required"`
-	FeeRecipient  common.Address      `json:"feeRecipient"  gencodec:"required"`
-	StateRoot     common.Hash         `json:"stateRoot"     gencodec:"required"`
-	ReceiptsRoot  common.Hash         `json:"receiptsRoot"  gencodec:"required"`
-	LogsBloom     []byte              `json:"logsBloom"     gencodec:"required"`
-	Random        common.Hash         `json:"prevRandao"    gencodec:"required"`
-	Number        uint64              `json:"blockNumber"   gencodec:"required"`
-	GasLimit      uint64              `json:"gasLimit"      gencodec:"required"`
-	GasUsed       uint64              `json:"gasUsed"       gencodec:"required"`
-	Timestamp     uint64              `json:"timestamp"     gencodec:"required"`
-	ExtraData     []byte              `json:"extraData"     gencodec:"required"`
-	BaseFeePerGas *big.Int            `json:"baseFeePerGas" gencodec:"required"`
-	BlockHash     common.Hash         `json:"blockHash"     gencodec:"required"`
-	Transactions  [][]byte            `json:"transactions"  gencodec:"required"`
-	Withdrawals   []*types.Withdrawal `json:"withdrawals"`
-	BlobGasUsed   *uint64             `json:"blobGasUsed"`
-	ExcessBlobGas *uint64             `json:"excessBlobGas"`
-	Deposits      types.Deposits      `json:"depositRequests"`
+	ParentHash         common.Hash              `json:"parentHash"    gencodec:"required"`
+	FeeRecipient       common.Address           `json:"feeRecipient"  gencodec:"required"`
+	StateRoot          common.Hash              `json:"stateRoot"     gencodec:"required"`
+	ReceiptsRoot       common.Hash              `json:"receiptsRoot"  gencodec:"required"`
+	LogsBloom          []byte                   `json:"logsBloom"     gencodec:"required"`
+	Random             common.Hash              `json:"prevRandao"    gencodec:"required"`
+	Number             uint64                   `json:"blockNumber"   gencodec:"required"`
+	GasLimit           uint64                   `json:"gasLimit"      gencodec:"required"`
+	GasUsed            uint64                   `json:"gasUsed"       gencodec:"required"`
+	Timestamp          uint64                   `json:"timestamp"     gencodec:"required"`
+	ExtraData          []byte                   `json:"extraData"     gencodec:"required"`
+	BaseFeePerGas      *big.Int                 `json:"baseFeePerGas" gencodec:"required"`
+	BlockHash          common.Hash              `json:"blockHash"     gencodec:"required"`
+	Transactions       [][]byte                 `json:"transactions"  gencodec:"required"`
+	Withdrawals        []*types.Withdrawal      `json:"withdrawals"`
+	BlobGasUsed        *uint64                  `json:"blobGasUsed"`
+	ExcessBlobGas      *uint64                  `json:"excessBlobGas"`
+	Deposits           types.Deposits           `json:"depositRequests"`
+	WithdrawalRequests types.WithdrawalRequests `json:"withdrawalRequests"`
 }
 
 // JSON type overrides for executableData.
@@ -231,7 +232,9 @@ func ExecutableDataToBlock(params ExecutableData, versionedHashes []common.Hash,
 		h := types.DeriveSha(types.Withdrawals(params.Withdrawals), trie.NewStackTrie(nil))
 		withdrawalsRoot = &h
 	}
-	// Compute requestsHash if any requests are non-nil.
+	// Only set requestsHash if there exists requests in the ExecutableData. This
+	// allows CLs to continue using the data structure before requests are
+	// enabled.
 	var (
 		requestsHash *common.Hash
 		requests     types.Requests
@@ -241,9 +244,17 @@ func ExecutableDataToBlock(params ExecutableData, versionedHashes []common.Hash,
 		for _, d := range params.Deposits {
 			requests = append(requests, types.NewRequest(d))
 		}
+	}
+	if params.WithdrawalRequests != nil {
+		for _, w := range params.WithdrawalRequests {
+			requests = append(requests, types.NewRequest(w))
+		}
+	}
+	if requests != nil {
 		h := types.DeriveSha(requests, trie.NewStackTrie(nil))
 		requestsHash = &h
 	}
+
 	header := &types.Header{
 		ParentHash:       params.ParentHash,
 		UncleHash:        types.EmptyUncleHash,
@@ -318,22 +329,27 @@ func BlockToExecutableData(block *types.Block, fees *big.Int, sidecars []*types.
 // assigns them to the associated fields in ExecutableData.
 func requestsToExecutableData(requests types.Requests, data *ExecutableData) {
 	if requests != nil {
-		// If requests is non-nil, it means deposits are available in block and we
-		// should return an empty slice instead of nil if there are no deposits.
+		// If requests is non-nil, it means the requests are available in block and
+		// we should return an empty slice instead of nil.
 		data.Deposits = make(types.Deposits, 0)
+		data.WithdrawalRequests = make(types.WithdrawalRequests, 0)
 	}
 	for _, r := range requests {
-		if d, ok := r.Inner().(*types.Deposit); ok {
-			data.Deposits = append(data.Deposits, d)
+		switch v := r.Inner().(type) {
+		case *types.Deposit:
+			data.Deposits = append(data.Deposits, v)
+		case *types.WithdrawalRequest:
+			data.WithdrawalRequests = append(data.WithdrawalRequests, v)
 		}
 	}
 }
 
 // ExecutionPayloadBody is used in the response to GetPayloadBodiesByHash and GetPayloadBodiesByRange
 type ExecutionPayloadBody struct {
-	TransactionData []hexutil.Bytes     `json:"transactions"`
-	Withdrawals     []*types.Withdrawal `json:"withdrawals"`
-	Deposits        types.Deposits      `json:"depositRequests"`
+	TransactionData    []hexutil.Bytes          `json:"transactions"`
+	Withdrawals        []*types.Withdrawal      `json:"withdrawals"`
+	Deposits           types.Deposits           `json:"depositRequests"`
+	WithdrawalRequests types.WithdrawalRequests `json:"withdrawalRequests"`
 }
 
 // Client identifiers to support ClientVersionV1.
