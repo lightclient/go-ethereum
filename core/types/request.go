@@ -32,7 +32,8 @@ var (
 
 // Request types.
 const (
-	DepositRequestType = 0x00
+	DepositRequestType    = 0x00
+	WithdrawalRequestType = 0x01
 )
 
 // Request is an EIP-7685 request object. It represents execution layer
@@ -66,13 +67,24 @@ func (s Requests) EncodeIndex(i int, w *bytes.Buffer) {
 
 // Retrieve deposits from a requests list.
 func (s Requests) Deposits() Deposits {
-	deposits := make(Deposits, 0, len(s))
+	dr := make(Deposits, 0, len(s))
 	for _, req := range s {
 		if d, ok := req.inner.(*Deposit); ok {
-			deposits = append(deposits, d)
+			dr = append(dr, d)
 		}
 	}
-	return deposits
+	return dr
+}
+
+// Retrieve withdrawals requests from a requests list.
+func (s Requests) Withdrawals() WithdrawalRequests {
+	wr := make(WithdrawalRequests, 0, len(s))
+	for _, req := range s {
+		if req.Type() == WithdrawalRequestType {
+			wr = append(wr, req.inner.(*WithdrawalRequest))
+		}
+	}
+	return wr
 }
 
 type RequestData interface {
@@ -154,6 +166,8 @@ func (r *Request) decode(b []byte) (RequestData, error) {
 	switch b[0] {
 	case DepositRequestType:
 		inner = new(Deposit)
+	case WithdrawalRequestType:
+		inner = new(WithdrawalRequest)
 	default:
 		return nil, ErrRequestTypeNotSupported
 	}
