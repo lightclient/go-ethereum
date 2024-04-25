@@ -214,6 +214,7 @@ func ProcessBlockHashHistory(statedb *state.StateDB, header *types.Header, chain
 	var (
 		prevHash   = header.ParentHash
 		parent     = chain.GetHeaderByHash(prevHash)
+		number     = header.Number.Uint64()
 		prevNumber = parent.Number.Uint64()
 	)
 	ProcessParentBlockHash(statedb, prevNumber, prevHash)
@@ -222,8 +223,8 @@ func ProcessBlockHashHistory(statedb *state.StateDB, header *types.Header, chain
 		return
 	}
 	var low uint64
-	if prevNumber > 255 {
-		low = prevNumber - 255
+	if number > params.HistoryServeWindow {
+		low = number - params.HistoryServeWindow
 	}
 	for i := prevNumber - 1; i >= low; i-- {
 		ProcessParentBlockHash(statedb, i, parent.ParentHash)
@@ -234,7 +235,7 @@ func ProcessBlockHashHistory(statedb *state.StateDB, header *types.Header, chain
 // ProcessParentBlockHash stores the parent block hash in the history storage contract
 // as per EIP-2935.
 func ProcessParentBlockHash(statedb *state.StateDB, prevNumber uint64, prevHash common.Hash) {
-	ringIndex := prevNumber % 256
+	ringIndex := prevNumber % params.HistoryServeWindow
 	var key common.Hash
 	binary.BigEndian.PutUint64(key[24:], ringIndex)
 	statedb.SetState(params.HistoryStorageAddress, key, prevHash)
