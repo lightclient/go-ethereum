@@ -202,7 +202,6 @@ func ProcessBeaconBlockRoot(beaconRoot common.Hash, vmenv *vm.EVM, statedb *stat
 		Data:      beaconRoot[:],
 	}
 	vmenv.Reset(NewEVMTxContext(msg), statedb)
-	statedb.AddAddressToAccessList(params.BeaconRootsAddress)
 	_, _, _ = vmenv.Call(vm.AccountRef(msg.From), *msg.To, msg.Data, 30_000_000, common.U2560)
 	statedb.Finalise(true)
 }
@@ -238,6 +237,4 @@ func ProcessParentBlockHash(statedb *state.StateDB, prevNumber uint64, prevHash 
 	var key common.Hash
 	binary.BigEndian.PutUint64(key[24:], ringIndex)
 	statedb.SetState(params.HistoryStorageAddress, key, prevHash)
-	statedb.AddAddressToAccessList(params.HistoryStorageAddress)
-	statedb.AddSlotToAccessList(params.HistoryStorageAddress, key)
 }
