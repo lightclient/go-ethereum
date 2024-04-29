@@ -173,6 +173,8 @@ const (
 
 	BlobTxTargetBlobGasPerBlock = 3 * BlobTxBlobGasPerBlob // Target consumable blob gas for data blobs per block (for 1559-like pricing)
 	MaxBlobGasPerBlock          = 6 * BlobTxBlobGasPerBlob // Maximum consumable blob gas for data blobs per block
+
+	HistoryServeWindow = 8192 // Number of blocks to serve historical block hashes for, EIP-2935.
 )
 
 // Gas discount table for BLS12-381 G1 and G2 multi exponentiation operations
@@ -191,6 +193,8 @@ var (
 	WithdrawalRequestsAddress = common.HexToAddress("0x00A3ca265EBcb825B45F985A16CEFB49958cE017")
 	// SystemAddress is where the system-transaction is sent from as per EIP-4788
 	SystemAddress = common.HexToAddress("0xfffffffffffffffffffffffffffffffffffffffe")
+	// HistoryStorageAddress is where the historical block hashes are stored.
+	HistoryStorageAddress = common.HexToAddress("0xfffffffffffffffffffffffffffffffffffffffd")
 
 	// Magic prefix for EIP-3074 AUTH messages.
 	AuthMagic = byte(0x04)
