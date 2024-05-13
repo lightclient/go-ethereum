@@ -241,9 +241,12 @@ func ExecutableDataToBlock(params ExecutableData, versionedHashes []common.Hash,
 		requests     types.Requests
 	)
 	if params.Deposits != nil {
+		requests = make(types.Requests, 0)
 		requests = append(requests, params.Deposits.Requests()...)
 	}
 	if params.WithdrawalRequests != nil {
+		// We assume that withdrawal reqs are non-nil only if deposits are non-nil
+		// (both can be empty)
 		requests = append(requests, params.WithdrawalRequests.Requests()...)
 	}
 	if requests != nil {

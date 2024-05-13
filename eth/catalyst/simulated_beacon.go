@@ -164,7 +164,7 @@ func (c *SimulatedBeacon) sealBlock(withdrawals []*types.Withdrawal, timestamp u
 		Withdrawals:           withdrawals,
 		Random:                random,
 		BeaconRoot:            &common.Hash{},
-	}, engine.PayloadV3, true)
+	}, engine.PayloadV4, true)
 	if err != nil {
 		return err
 	}
