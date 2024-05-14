@@ -104,7 +104,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	// Read requests if Prague is enabled.
 	var requests types.Requests
 	if p.config.IsPrague(block.Number(), block.Time()) {
-		requests, err = ParseDepositLogs(allLogs)
+		requests, err = ParseDepositLogs(allLogs, p.config)
 		if err != nil {
 			return nil, err
 		}
@@ -227,10 +227,10 @@ func ProcessBeaconBlockRoot(beaconRoot common.Hash, vmenv *vm.EVM, statedb *stat
 
 // ParseDepositLogs extracts the EIP-6110 deposit values from logs emitted by
 // BeaconDepositContract.
-func ParseDepositLogs(logs []*types.Log) (types.Requests, error) {
+func ParseDepositLogs(logs []*types.Log, config *params.ChainConfig) (types.Requests, error) {
 	deposits := make(types.Requests, 0)
 	for _, log := range logs {
-		if log.Address == params.BeaconDepositContractAddress {
+		if log.Address == config.DepositContractAddress {
 			d, err := types.UnpackIntoDeposit(log.Data)
 			if err != nil {
 				return nil, fmt.Errorf("unable to parse deposit data: %v", err)
