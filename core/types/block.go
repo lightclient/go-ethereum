@@ -381,6 +381,9 @@ func (b *Block) Deposits() Deposits {
 
 func (b *Block) WithdrawalRequests() WithdrawalRequests {
 	var wxs WithdrawalRequests
+	if b.withdrawals != nil {
+		wxs = make(WithdrawalRequests, 0)
+	}
 	for _, r := range b.requests {
 		if w, ok := r.inner.(*WithdrawalRequest); ok {
 			wxs = append(wxs, w)
