@@ -197,6 +197,7 @@ func (ec *Client) getBlock(ctx context.Context, method string, args ...interface
 			Transactions: txs,
 			Uncles:       uncles,
 			Withdrawals:  body.Withdrawals,
+			Requests:     body.Requests,
 		}), nil
 }
 
