@@ -230,7 +230,11 @@ func (api *ConsensusAPI) ForkchoiceUpdatedV3(update engine.ForkchoiceStateV1, pa
 	// hash, even if params are wrong. To do this we need to split up
 	// forkchoiceUpdate into a function that only updates the head and then a
 	// function that kicks off block construction.
-	return api.forkchoiceUpdated(update, params, engine.PayloadV3, false)
+	payloadVersion := engine.PayloadV3
+	if params != nil && api.eth.BlockChain().Config().LatestFork(params.Timestamp) == forks.Prague {
+		payloadVersion = engine.PayloadV4
+	}
+	return api.forkchoiceUpdated(update, params, payloadVersion, false)
 }
 
 func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payloadAttributes *engine.PayloadAttributes, payloadVersion engine.PayloadVersion, simulatorMode bool) (engine.ForkChoiceResponse, error) {
