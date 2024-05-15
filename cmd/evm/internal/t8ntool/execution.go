@@ -368,7 +368,7 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig,
 		for _, receipt := range receipts {
 			allLogs = append(allLogs, receipt.Logs...)
 		}
-		requests, err := core.ParseDepositLogs(allLogs)
+		requests, err := core.ParseDepositLogs(allLogs, chainConfig)
 		if err != nil {
 			return nil, nil, nil, NewError(ErrorEVM, fmt.Errorf("could not parse requests logs: %v", err))
 		}
