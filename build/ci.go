@@ -134,8 +134,6 @@ var (
 	// Tests to skip in CI.
 	// TODO: improve below tests so they aren't so flaky.
 	skipTests = []string{
-		"TestSkeletonSyncRetrievals",
-		"TestUpdatedKeyfileContents",
 		"TestForkResendTx",
 	}
 )
