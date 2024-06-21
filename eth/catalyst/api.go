@@ -894,6 +894,7 @@ func (api *ConsensusAPI) GetPayloadBodiesByHashV1(hashes []common.Hash) []*engin
 		if body != nil {
 			body.Deposits = nil
 			bodies[i].WithdrawalRequests = nil
+			bodies[i].ConsolidationRequests = nil
 			bodies[i] = body
 		}
 	}
@@ -924,6 +925,7 @@ func (api *ConsensusAPI) GetPayloadBodiesByRangeV1(start, count hexutil.Uint64) 
 		if bodies[i] != nil {
 			bodies[i].Deposits = nil
 			bodies[i].WithdrawalRequests = nil
+			bodies[i].ConsolidationRequests = nil
 		}
 	}
 	return bodies, nil
@@ -962,11 +964,12 @@ func getBody(block *types.Block) *engine.ExecutionPayloadBody {
 	}
 
 	var (
-		body               = block.Body()
-		txs                = make([]hexutil.Bytes, len(body.Transactions))
-		withdrawals        = body.Withdrawals
-		depositRequests    types.Deposits
-		withdrawalRequests types.WithdrawalRequests
+		body                  = block.Body()
+		txs                   = make([]hexutil.Bytes, len(body.Transactions))
+		withdrawals           = body.Withdrawals
+		depositRequests       types.Deposits
+		withdrawalRequests    types.WithdrawalRequests
+		consolidationRequests types.ConsolidationRequests
 	)
 
 	for j, tx := range body.Transactions {
@@ -988,13 +991,16 @@ func getBody(block *types.Block) *engine.ExecutionPayloadBody {
 				depositRequests = append(depositRequests, v)
 			case *types.WithdrawalRequest:
 				withdrawalRequests = append(withdrawalRequests, v)
+			case *types.ConsolidationRequest:
+				consolidationRequests = append(consolidationRequests, v)
 			}
 		}
 	}
 	return &engine.ExecutionPayloadBody{
-		TransactionData:    txs,
-		Withdrawals:        withdrawals,
-		Deposits:           depositRequests,
-		WithdrawalRequests: withdrawalRequests,
+		TransactionData:       txs,
+		Withdrawals:           withdrawals,
+		Deposits:              depositRequests,
+		WithdrawalRequests:    withdrawalRequests,
+		ConsolidationRequests: consolidationRequests,
 	}
 }
