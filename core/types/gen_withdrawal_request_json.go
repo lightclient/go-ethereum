@@ -15,7 +15,7 @@ var _ = (*withdrawalRequestMarshaling)(nil)
 func (w WithdrawalRequest) MarshalJSON() ([]byte, error) {
 	type WithdrawalRequest struct {
 		Source    common.Address `json:"sourceAddress"`
-		PublicKey [48]byte       `json:"validatorPublicKey"`
+		PublicKey [48]byte       `json:"validatorPubkey"`
 		Amount    hexutil.Uint64 `json:"amount"`
 	}
 	var enc WithdrawalRequest
@@ -29,7 +29,7 @@ func (w WithdrawalRequest) MarshalJSON() ([]byte, error) {
 func (w *WithdrawalRequest) UnmarshalJSON(input []byte) error {
 	type WithdrawalRequest struct {
 		Source    *common.Address `json:"sourceAddress"`
-		PublicKey *[48]byte       `json:"validatorPublicKey"`
+		PublicKey *[48]byte       `json:"validatorPubkey"`
 		Amount    *hexutil.Uint64 `json:"amount"`
 	}
 	var dec WithdrawalRequest

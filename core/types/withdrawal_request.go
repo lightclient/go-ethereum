@@ -30,7 +30,7 @@ import (
 // the validator associated with the public key for amount.
 type WithdrawalRequest struct {
 	Source    common.Address `json:"sourceAddress"`
-	PublicKey [48]byte       `json:"validatorPublicKey"`
+	PublicKey [48]byte       `json:"validatorPubkey"`
 	Amount    uint64         `json:"amount"`
 }
 
