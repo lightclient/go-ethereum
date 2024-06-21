@@ -394,6 +394,21 @@ func (b *Block) WithdrawalRequests() WithdrawalRequests {
 	return wxs
 }
 
+func (b *Block) ConsolidationRequests() ConsolidationRequests {
+	var cxs ConsolidationRequests
+	if b.requests != nil {
+		// If requests is non-nil, it means deposits are available in block and we
+		// should return an empty slice instead of nil if there are no deposits.
+		cxs = make(ConsolidationRequests, 0)
+	}
+	for _, r := range b.requests {
+		if c, ok := r.inner.(*ConsolidationRequest); ok {
+			cxs = append(cxs, c)
+		}
+	}
+	return cxs
+}
+
 func (b *Block) Transaction(hash common.Hash) *Transaction {
 	for _, transaction := range b.transactions {
 		if transaction.Hash() == hash {
