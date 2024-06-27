@@ -7,6 +7,7 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/holiman/uint256"
@@ -32,6 +33,8 @@ type SetCodeTx struct {
 	S *uint256.Int `json:"s" gencodec:"required"`
 }
 
+//go:generate go run github.com/fjl/gencodec -type Authorization -field-override authorizationMarshaling -out gen_authorization.go
+
 // Authorization is an authorization from an account to deploy code at it's
 // address.
 type Authorization struct {
@@ -41,6 +44,15 @@ type Authorization struct {
 	V       *big.Int       `json:"v" gencodec:"required"`
 	R       *big.Int       `json:"r" gencodec:"required"`
 	S       *big.Int       `json:"s" gencodec:"required"`
+}
+
+// field type overrides for gencodec
+type authorizationMarshaling struct {
+	ChainID *hexutil.Big
+	Nonce   []hexutil.Uint64
+	V       *hexutil.Big
+	R       *hexutil.Big
+	S       *hexutil.Big
 }
 
 func SignAuth(auth *Authorization, prv *ecdsa.PrivateKey) (*Authorization, error) {
