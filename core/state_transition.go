@@ -437,6 +437,7 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 	// Check authorizations list validity.
 	var delegations []types.SetCodeDelegation
 	if msg.AuthList != nil {
+		seen := make(map[common.Address]bool)
 		for _, auth := range msg.AuthList {
 			authority, err := auth.Authority()
 			if err != nil {
@@ -455,7 +456,10 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 					continue
 				}
 			}
-			delegations = append(delegations, types.SetCodeDelegation{From: authority, Nonce: nonce, Target: auth.Address})
+			if _, ok := seen[authority]; !ok {
+				seen[authority] = true
+				delegations = append(delegations, types.SetCodeDelegation{From: authority, Nonce: nonce, Target: auth.Address})
+			}
 		}
 	}
 
