@@ -36,7 +36,8 @@ type WithdrawalRequest struct {
 
 // field type overrides for gencodec
 type withdrawalRequestMarshaling struct {
-	Amount hexutil.Uint64
+	PublicKey hexutil.Bytes
+	Amount    hexutil.Uint64
 }
 
 func (w *WithdrawalRequest) Bytes() []byte {

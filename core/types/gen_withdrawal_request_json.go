@@ -4,6 +4,7 @@ package types
 
 import (
 	"encoding/json"
+	"errors"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -15,12 +16,12 @@ var _ = (*withdrawalRequestMarshaling)(nil)
 func (w WithdrawalRequest) MarshalJSON() ([]byte, error) {
 	type WithdrawalRequest struct {
 		Source    common.Address `json:"sourceAddress"`
-		PublicKey [48]byte       `json:"validatorPublicKey"`
+		PublicKey hexutil.Bytes  `json:"validatorPubkey"`
 		Amount    hexutil.Uint64 `json:"amount"`
 	}
 	var enc WithdrawalRequest
 	enc.Source = w.Source
-	enc.PublicKey = w.PublicKey
+	enc.PublicKey = w.PublicKey[:]
 	enc.Amount = hexutil.Uint64(w.Amount)
 	return json.Marshal(&enc)
 }
@@ -29,7 +30,7 @@ func (w WithdrawalRequest) MarshalJSON() ([]byte, error) {
 func (w *WithdrawalRequest) UnmarshalJSON(input []byte) error {
 	type WithdrawalRequest struct {
 		Source    *common.Address `json:"sourceAddress"`
-		PublicKey *[48]byte       `json:"validatorPublicKey"`
+		PublicKey *hexutil.Bytes  `json:"validatorPubkey"`
 		Amount    *hexutil.Uint64 `json:"amount"`
 	}
 	var dec WithdrawalRequest
@@ -40,7 +41,10 @@ func (w *WithdrawalRequest) UnmarshalJSON(input []byte) error {
 		w.Source = *dec.Source
 	}
 	if dec.PublicKey != nil {
-		w.PublicKey = *dec.PublicKey
+		if len(*dec.PublicKey) != len(w.PublicKey) {
+			return errors.New("field 'validatorPubkey' has wrong length, need 48 items")
+		}
+		copy(w.PublicKey[:], *dec.PublicKey)
 	}
 	if dec.Amount != nil {
 		w.Amount = uint64(*dec.Amount)
