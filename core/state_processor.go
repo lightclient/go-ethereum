@@ -306,7 +306,6 @@ func ProcessDequeueConsolidationRequests(vmenv *vm.EVM, statedb *state.StateDB) 
 	ret, _, _ := vmenv.Call(vm.AccountRef(msg.From), *msg.To, msg.Data, 30_000_000, common.U2560)
 	statedb.Finalise(true)
 
-	fmt.Println("consolidation requests", ret)
 	// Parse out the exits.
 	var reqs types.Requests
 	for i := 0; i < len(ret)/116; i++ {
