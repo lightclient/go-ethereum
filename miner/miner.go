@@ -154,7 +154,7 @@ func (miner *Miner) getPending() *newPayloadResult {
 		coinbase:    miner.config.PendingFeeRecipient,
 		random:      common.Hash{},
 		withdrawals: withdrawal,
-		beaconRoot:  nil,
+		beaconRoot:  &common.Hash{},
 		noTxs:       false,
 	})
 	if ret.err != nil {
