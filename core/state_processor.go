@@ -80,6 +80,10 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	if beaconRoot := block.BeaconRoot(); beaconRoot != nil {
 		ProcessBeaconBlockRoot(*beaconRoot, vmenv, statedb)
 	}
+	if p.config.IsPrague(block.Number(), block.Time()) {
+		// This should not underflow as genesis block is not processed.
+		ProcessParentBlockHash(statedb, vmenv, block.ParentHash())
+	}
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
 		msg, err := TransactionToMessage(tx, signer, header.BaseFee)
@@ -252,6 +256,7 @@ func ProcessDequeueWithdrawalRequests(vmenv *vm.EVM, statedb *state.StateDB) typ
 	if vmenv.Config.Tracer != nil && vmenv.Config.Tracer.OnSystemCallEnd != nil {
 		defer vmenv.Config.Tracer.OnSystemCallEnd()
 	}
+
 	msg := &Message{
 		From:      params.SystemAddress,
 		GasLimit:  30_000_000,
@@ -320,4 +325,29 @@ func ProcessDequeueConsolidationRequests(vmenv *vm.EVM, statedb *state.StateDB) 
 		reqs = append(reqs, types.NewRequest(cx))
 	}
 	return reqs
+}
+
+// ProcessParentBlockHash stores the parent block hash in the history storage contract
+// as per EIP-2935.
+func ProcessParentBlockHash(statedb *state.StateDB, vmenv *vm.EVM, prevHash common.Hash) {
+	if vmenv.Config.Tracer != nil && vmenv.Config.Tracer.OnSystemCallStart != nil {
+		vmenv.Config.Tracer.OnSystemCallStart()
+	}
+	if vmenv.Config.Tracer != nil && vmenv.Config.Tracer.OnSystemCallEnd != nil {
+		defer vmenv.Config.Tracer.OnSystemCallEnd()
+	}
+
+	msg := &Message{
+		From:      params.SystemAddress,
+		GasLimit:  30_000_000,
+		GasPrice:  common.Big0,
+		GasFeeCap: common.Big0,
+		GasTipCap: common.Big0,
+		To:        &params.HistoryStorageAddress,
+		Data:      prevHash.Bytes(),
+	}
+	vmenv.Reset(NewEVMTxContext(msg), statedb)
+	statedb.AddAddressToAccessList(params.HistoryStorageAddress)
+	_, _, _ = vmenv.Call(vm.AccountRef(msg.From), *msg.To, msg.Data, 30_000_000, common.U2560)
+	statedb.Finalise(true)
 }
