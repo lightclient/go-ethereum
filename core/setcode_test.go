@@ -104,6 +104,7 @@ func TestEIP7702(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s", err)
 		}
+
 		b.AddTx(tx)
 	})
 	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, nil, engine, vm.Config{Tracer: logger.NewMarkdownLogger(&logger.Config{}, os.Stderr).Hooks()}, nil, nil)

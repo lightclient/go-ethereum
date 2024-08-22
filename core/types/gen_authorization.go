@@ -16,7 +16,7 @@ var _ = (*authorizationMarshaling)(nil)
 // MarshalJSON marshals as JSON.
 func (a Authorization) MarshalJSON() ([]byte, error) {
 	type Authorization struct {
-		ChainID *hexutil.Big
+		ChainID *hexutil.Big     `json:"chainId" gencode:"required"`
 		Address common.Address   `json:"address" gencodec:"required"`
 		Nonce   []hexutil.Uint64 `json:"nonce" gencodec:"required"`
 		V       *hexutil.Big     `json:"v" gencodec:"required"`
@@ -41,7 +41,7 @@ func (a Authorization) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON unmarshals from JSON.
 func (a *Authorization) UnmarshalJSON(input []byte) error {
 	type Authorization struct {
-		ChainID *hexutil.Big
+		ChainID *hexutil.Big     `json:"chainId" gencode:"required"`
 		Address *common.Address  `json:"address" gencodec:"required"`
 		Nonce   []hexutil.Uint64 `json:"nonce" gencodec:"required"`
 		V       *hexutil.Big     `json:"v" gencodec:"required"`

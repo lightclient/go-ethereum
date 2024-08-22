@@ -38,7 +38,7 @@ type SetCodeTx struct {
 // Authorization is an authorization from an account to deploy code at it's
 // address.
 type Authorization struct {
-	ChainID *big.Int
+	ChainID *big.Int       `json:"chainId" gencode:"required"`
 	Address common.Address `json:"address" gencodec:"required"`
 	Nonce   []uint64       `json:"nonce" gencodec:"required"`
 	V       *big.Int       `json:"v" gencodec:"required"`
