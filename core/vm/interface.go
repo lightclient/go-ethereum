@@ -83,6 +83,8 @@ type StateDB interface {
 
 	Prepare(rules params.Rules, sender, coinbase common.Address, dest *common.Address, precompiles []common.Address, txAccesses types.AccessList, authList []types.SetCodeDelegation)
 
+	ClearDelegations()
+
 	RevertToSnapshot(int)
 	Snapshot() int
 

@@ -1392,6 +1392,10 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool) (common.Hash, er
 	return ret.root, nil
 }
 
+func (s *StateDB) ClearDelegations() {
+	s.transientDelegation = nil
+}
+
 // Prepare handles the preparatory steps for executing a state transition with.
 // This method must be invoked before state transition.
 //
