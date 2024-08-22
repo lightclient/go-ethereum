@@ -97,6 +97,9 @@ type Header struct {
 
 	// RequestsHash was added by EIP-7685 and is ignored in legacy headers.
 	RequestsHash *common.Hash `json:"requestsRoot" rlp:"optional"`
+
+	// TargetBlobCount was added by EIP-7742 and is ignored in legacy headers.
+	TargetBlobCount *uint64 `json:"targetBlobCount" rlp:"optional"`
 }
 
 // field type overrides for gencodec

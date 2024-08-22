@@ -25,6 +25,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip7742"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -286,6 +287,13 @@ func (beacon *Beacon) verifyHeader(chain consensus.ChainHeaderReader, header, pa
 		if header.ParentBeaconRoot == nil {
 			return errors.New("header is missing beaconRoot")
 		}
+	}
+	// Apply blob checks to header.
+	if chain.Config().IsPrague(header.Number, header.Time) {
+		if err := eip7742.VerifyEIP7742Header(parent, header); err != nil {
+			return err
+		}
+	} else if cancun {
 		if err := eip4844.VerifyEIP4844Header(parent, header); err != nil {
 			return err
 		}
