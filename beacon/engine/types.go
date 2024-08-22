@@ -49,6 +49,7 @@ type PayloadAttributes struct {
 	SuggestedFeeRecipient common.Address      `json:"suggestedFeeRecipient" gencodec:"required"`
 	Withdrawals           []*types.Withdrawal `json:"withdrawals"`
 	BeaconRoot            *common.Hash        `json:"parentBeaconBlockRoot"`
+	TargetBlobCount       *uint64             `json:"targetBlobCount"`
 }
 
 // JSON type overrides for PayloadAttributes.
@@ -197,7 +198,7 @@ func decodeTransactions(enc [][]byte) ([]*types.Transaction, error) {
 // and that the blockhash of the constructed block matches the parameters. Nil
 // Withdrawals value will propagate through the returned block. Empty
 // Withdrawals value must be passed via non-nil, length 0 value in data.
-func ExecutableDataToBlock(data ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash) (*types.Block, error) {
+func ExecutableDataToBlock(data ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, targetBlobCount *uint64) (*types.Block, error) {
 	txs, err := decodeTransactions(data.Transactions)
 	if err != nil {
 		return nil, err
@@ -266,6 +267,7 @@ func ExecutableDataToBlock(data ExecutableData, versionedHashes []common.Hash, b
 		BlobGasUsed:      data.BlobGasUsed,
 		ParentBeaconRoot: beaconRoot,
 		RequestsHash:     requestsHash,
+		TargetBlobCount:  targetBlobCount,
 	}
 	var (
 		body  = types.Body{Transactions: txs, Uncles: nil, Withdrawals: data.Withdrawals, Requests: requests}
