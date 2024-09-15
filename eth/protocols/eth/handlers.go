@@ -25,8 +25,10 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/golang/snappy"
 )
 
 func handleGetBlockHeaders(backend Backend, msg Decoder, peer *Peer) error {
@@ -412,6 +414,12 @@ func answerGetPooledTransactions(backend Backend, query GetPooledTransactionsReq
 			hashes = append(hashes, hash)
 			txs = append(txs, encoded)
 			bytes += len(encoded)
+
+			if metrics.Enabled && tx.Type() == types.BlobTxType {
+				enc := snappy.Encode(nil, encoded)
+				m := fmt.Sprintf("%s/%s/%d/%s", "p2p/egress", "eth", 68, "blob")
+				metrics.GetOrRegisterMeter(m, nil).Mark(int64(len(enc)))
+			}
 		}
 	}
 	return hashes, txs
@@ -451,6 +459,13 @@ func handlePooledTransactions(backend Backend, msg Decoder, peer *Peer) error {
 		// Validate and mark the remote transaction
 		if tx == nil {
 			return fmt.Errorf("%w: transaction %d is nil", errDecode, i)
+		}
+		if metrics.Enabled && tx.Type() == types.BlobTxType {
+			data, _ := rlp.EncodeToBytes(tx)
+			enc := snappy.Encode(nil, data)
+
+			m := fmt.Sprintf("%s/%s/%d/%s", "p2p/ingress", "eth", 68, "blob")
+			metrics.GetOrRegisterMeter(m, nil).Mark(int64(len(enc)))
 		}
 		peer.markTransaction(tx.Hash())
 	}
