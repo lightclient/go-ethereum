@@ -500,6 +500,13 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 			}
 			st.state.SetNonce(authority, auth.Nonce+1)
 			st.state.SetCode(authority, types.AddressToDelegation(auth.Address))
+
+			// Usually the transation destination and delegation target are added to
+			// the access list in statedb.Prepare(..), however if the delegation is in
+			// the same transaction we need add here as Prepare already happened.
+			if *msg.To == authority {
+				st.state.AddAddressToAccessList(auth.Address)
+			}
 		}
 	}
 
