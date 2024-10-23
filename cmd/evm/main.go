@@ -19,79 +19,124 @@ package main
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 
+	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/eth/tracers/logger"
 	"github.com/ethereum/go-ethereum/internal/debug"
 	"github.com/ethereum/go-ethereum/internal/flags"
 	"github.com/urfave/cli/v2"
 )
 
+// Some other nice-to-haves:
+// * accumulate traces into an object to bundle with test
+// * write tx identifier for trace before hand (blocktest only)
+// * combine blocktest and statetest runner logic using unified test interface
+
 const traceCategory = "TRACING"
 
 var (
-	// Debug flags.
+	// Test running flags.
+	RunFlag = &cli.StringFlag{
+		Name:  "run",
+		Value: ".*",
+		Usage: "Run only those tests matching the regular expression.",
+	}
+	WitnessCrossCheckFlag = &cli.BoolFlag{
+		Name:    "cross-check",
+		Aliases: []string{"xc"},
+		Usage:   "Cross-check stateful execution against stateless, verifying the witness generation.",
+	}
+
+	// Debugging flags.
 	DumpFlag = &cli.BoolFlag{
 		Name:  "dump",
 		Usage: "dumps the state after the run",
 	}
-
+	HumanReadableFlag = &cli.BoolFlag{
+		Name:  "human",
+		Usage: "\"Human-readable\" output",
+	}
 	StatDumpFlag = &cli.BoolFlag{
 		Name:  "statdump",
 		Usage: "displays stack and heap memory information",
 	}
 
 	// Tracing flags.
-	DebugFlag = &cli.BoolFlag{
-		Name:     "debug",
-		Usage:    "output full trace logs",
+	TraceFlag = &cli.BoolFlag{
+		Name:     "trace",
+		Usage:    "Enable tracing and output trace log.",
 		Category: traceCategory,
 	}
-	MachineFlag = &cli.BoolFlag{
-		Name:     "json",
-		Usage:    "output trace logs in machine readable format (json)",
+	TraceFormatFlag = &cli.StringFlag{
+		Name:     "trace.format",
+		Usage:    "Trace output format to use (struct|json)",
+		Value:    "struct",
 		Category: traceCategory,
 	}
-
-	DisableMemoryFlag = &cli.BoolFlag{
-		Name:     "nomemory",
+	TraceDisableMemoryFlag = &cli.BoolFlag{
+		Name:     "trace.nomemory",
+		Aliases:  []string{"nomemory"},
 		Value:    true,
 		Usage:    "disable memory output",
 		Category: traceCategory,
 	}
-	DisableStackFlag = &cli.BoolFlag{
-		Name:     "nostack",
+	TraceDisableStackFlag = &cli.BoolFlag{
+		Name:     "trace.nostack",
+		Aliases:  []string{"nostack"},
 		Usage:    "disable stack output",
 		Category: traceCategory,
 	}
-	DisableStorageFlag = &cli.BoolFlag{
-		Name:     "nostorage",
+	TraceDisableStorageFlag = &cli.BoolFlag{
+		Name:     "trace.nostorage",
+		Aliases:  []string{"nostorage"},
 		Usage:    "disable storage output",
 		Category: traceCategory,
 	}
-	DisableReturnDataFlag = &cli.BoolFlag{
-		Name:     "noreturndata",
+	TraceDisableReturnDataFlag = &cli.BoolFlag{
+		Name:     "trace.noreturndata",
+		Aliases:  []string{"noreturndata"},
 		Value:    true,
 		Usage:    "enable return data output",
+		Category: traceCategory,
+	}
+
+	// Deprecated flags.
+	DebugFlag = &cli.BoolFlag{
+		Name:     "debug",
+		Usage:    "output full trace logs (deprecated)",
+		Hidden:   true,
+		Category: traceCategory,
+	}
+	MachineFlag = &cli.BoolFlag{
+		Name:     "json",
+		Usage:    "output trace logs in machine readable format, json (deprecated)",
+		Hidden:   true,
 		Category: traceCategory,
 	}
 )
 
 // traceFlags contains flags that configure tracing output.
 var traceFlags = []cli.Flag{
+	TraceFlag,
+	TraceFormatFlag,
+	TraceDisableMemoryFlag,
+	TraceDisableStackFlag,
+	TraceDisableStorageFlag,
+	TraceDisableReturnDataFlag,
+
+	// deprecated
 	DebugFlag,
-	DumpFlag,
 	MachineFlag,
-	StatDumpFlag,
-	DisableMemoryFlag,
-	DisableStackFlag,
-	DisableStorageFlag,
-	DisableReturnDataFlag,
 }
 
 var app = flags.NewApp("the evm command line interface")
 
 func init() {
-	app.Flags = flags.Merge(traceFlags, debug.Flags)
+	app.Flags = flags.Merge(debug.Flags)
 	app.Commands = []*cli.Command{
 		runCommand,
 		blockTestCommand,
@@ -112,4 +157,47 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// tracerFromFlags parses the cli flags and returns the specified tracer.
+func tracerFromFlags(ctx *cli.Context) *tracing.Hooks {
+	config := &logger.Config{
+		EnableMemory:     !ctx.Bool(TraceDisableMemoryFlag.Name),
+		DisableStack:     ctx.Bool(TraceDisableStackFlag.Name),
+		DisableStorage:   ctx.Bool(TraceDisableStorageFlag.Name),
+		EnableReturnData: !ctx.Bool(TraceDisableReturnDataFlag.Name),
+	}
+	switch {
+	case ctx.Bool(TraceFlag.Name) && ctx.String(TraceFormatFlag.Name) == "struct":
+		return logger.NewStructLogger(config).Hooks()
+	case ctx.Bool(TraceFlag.Name) && ctx.String(TraceFormatFlag.Name) == "json":
+		return logger.NewJSONLogger(config, os.Stderr)
+	case ctx.Bool(MachineFlag.Name):
+		return logger.NewJSONLogger(config, os.Stderr)
+	case ctx.Bool(DebugFlag.Name):
+		return logger.NewStructLogger(config).Hooks()
+	default:
+		return nil
+	}
+}
+
+// collectJSONFiles walks the given path and accumulates all files with json
+// extension.
+func collectJSONFiles(path string) []string {
+	var out []string
+	filepath.Walk(path, func(path string, info fs.FileInfo, err error) error {
+		if !info.IsDir() && filepath.Ext(info.Name()) == ".json" {
+			out = append(out, path)
+		}
+		return nil
+	})
+	return out
+}
+
+// dump returns a state dump for the most current trie.
+func dump(s *state.StateDB) *state.Dump {
+	root := s.IntermediateRoot(false)
+	cpy, _ := state.New(root, s.Database())
+	dump := cpy.RawDump(nil)
+	return &dump
 }

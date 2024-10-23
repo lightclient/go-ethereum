@@ -62,6 +62,7 @@ var runCommand = &cli.Command{
 		ReceiverFlag,
 		SenderFlag,
 		ValueFlag,
+		StatDumpFlag,
 	}, traceFlags),
 }
 
@@ -181,10 +182,10 @@ func timedExec(bench bool, execFunc func() ([]byte, uint64, error)) (output []by
 
 func runCmd(ctx *cli.Context) error {
 	logconfig := &logger.Config{
-		EnableMemory:     !ctx.Bool(DisableMemoryFlag.Name),
-		DisableStack:     ctx.Bool(DisableStackFlag.Name),
-		DisableStorage:   ctx.Bool(DisableStorageFlag.Name),
-		EnableReturnData: !ctx.Bool(DisableReturnDataFlag.Name),
+		EnableMemory:     !ctx.Bool(TraceDisableMemoryFlag.Name),
+		DisableStack:     ctx.Bool(TraceDisableStackFlag.Name),
+		DisableStorage:   ctx.Bool(TraceDisableStorageFlag.Name),
+		EnableReturnData: !ctx.Bool(TraceDisableReturnDataFlag.Name),
 		Debug:            ctx.Bool(DebugFlag.Name),
 	}
 
