@@ -135,9 +135,6 @@ type StateDB struct {
 	// Snapshot and RevertToSnapshot.
 	journal *journal
 
-	// State witness if cross validation is needed
-	witness *stateless.Witness
-
 	// Measurements gathered during execution for debugging purposes
 	AccountReads    time.Duration
 	AccountHashes   time.Duration
