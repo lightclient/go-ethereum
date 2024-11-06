@@ -17,19 +17,32 @@
 package tracetest
 
 import (
+	"context"
+	"crypto/ecdsa"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/tracers"
+	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/tests"
 )
 
@@ -136,4 +149,193 @@ func testPrestateDiffTracer(tracerName string, dirPath string, t *testing.T) {
 			}
 		})
 	}
+}
+
+type Account struct {
+	key  *ecdsa.PrivateKey
+	addr common.Address
+}
+
+func newAccounts(n int) (accounts []Account) {
+	for i := 0; i < n; i++ {
+		key, _ := crypto.GenerateKey()
+		addr := crypto.PubkeyToAddress(key.PublicKey)
+		accounts = append(accounts, Account{key: key, addr: addr})
+	}
+	slices.SortFunc(accounts, func(a, b Account) int { return a.addr.Cmp(b.addr) })
+	return accounts
+}
+
+type testBackend struct {
+	chainConfig *params.ChainConfig
+	engine      consensus.Engine
+	chaindb     ethdb.Database
+	chain       *core.BlockChain
+
+	refHook func() // Hook is invoked when the requested state is referenced
+	relHook func() // Hook is invoked when the requested state is released
+}
+
+func (b *testBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
+	return b.chain.GetHeaderByHash(hash), nil
+}
+
+func (b *testBackend) HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error) {
+	if number == rpc.PendingBlockNumber || number == rpc.LatestBlockNumber {
+		return b.chain.CurrentHeader(), nil
+	}
+	return b.chain.GetHeaderByNumber(uint64(number)), nil
+}
+
+func (b *testBackend) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
+	return b.chain.GetBlockByHash(hash), nil
+}
+
+func (b *testBackend) BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error) {
+	if number == rpc.PendingBlockNumber || number == rpc.LatestBlockNumber {
+		return b.chain.GetBlockByNumber(b.chain.CurrentBlock().Number.Uint64()), nil
+	}
+	return b.chain.GetBlockByNumber(uint64(number)), nil
+}
+
+func (b *testBackend) GetTransaction(ctx context.Context, txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64, error) {
+	tx, hash, blockNumber, index := rawdb.ReadTransaction(b.chaindb, txHash)
+	return tx != nil, tx, hash, blockNumber, index, nil
+}
+
+func (b *testBackend) RPCGasCap() uint64 {
+	return 25000000
+}
+
+func (b *testBackend) ChainConfig() *params.ChainConfig {
+	return b.chainConfig
+}
+
+func (b *testBackend) Engine() consensus.Engine {
+	return b.engine
+}
+
+func (b *testBackend) ChainDb() ethdb.Database {
+	return b.chaindb
+}
+
+// teardown releases the associated resources.
+func (b *testBackend) teardown() {
+	b.chain.Stop()
+}
+
+func (b *testBackend) StateAtBlock(ctx context.Context, block *types.Block, reexec uint64, base *state.StateDB, readOnly bool, preferDisk bool) (*state.StateDB, tracers.StateReleaseFunc, error) {
+	statedb, err := b.chain.StateAt(block.Root())
+	if err != nil {
+		return nil, nil, errors.New("state not found")
+	}
+	if b.refHook != nil {
+		b.refHook()
+	}
+	release := func() {
+		if b.relHook != nil {
+			b.relHook()
+		}
+	}
+	return statedb, release, nil
+}
+
+func (b *testBackend) StateAtTransaction(ctx context.Context, block *types.Block, txIndex int, reexec uint64) (*types.Transaction, vm.BlockContext, *state.StateDB, tracers.StateReleaseFunc, error) {
+	parent := b.chain.GetBlock(block.ParentHash(), block.NumberU64()-1)
+	if parent == nil {
+		return nil, vm.BlockContext{}, nil, nil, errors.New("block not found")
+	}
+	statedb, release, err := b.StateAtBlock(ctx, parent, reexec, nil, true, false)
+	if err != nil {
+		return nil, vm.BlockContext{}, nil, nil, errors.New("state not found")
+	}
+	if txIndex == 0 && len(block.Transactions()) == 0 {
+		return nil, vm.BlockContext{}, statedb, release, nil
+	}
+	// Recompute transactions up to the target index.
+	signer := types.MakeSigner(b.chainConfig, block.Number(), block.Time())
+	for idx, tx := range block.Transactions() {
+		msg, _ := core.TransactionToMessage(tx, signer, block.BaseFee())
+		txContext := core.NewEVMTxContext(msg)
+		context := core.NewEVMBlockContext(block.Header(), b.chain, nil)
+		if idx == txIndex {
+			return tx, context, statedb, release, nil
+		}
+		vmenv := vm.NewEVM(context, txContext, statedb, b.chainConfig, vm.Config{})
+		if _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(tx.Gas())); err != nil {
+			return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction %#x failed: %v", tx.Hash(), err)
+		}
+		statedb.Finalise(vmenv.ChainConfig().IsEIP158(block.Number()))
+	}
+	return nil, vm.BlockContext{}, nil, nil, fmt.Errorf("transaction index %d out of range for block %#x", txIndex, block.Hash())
+}
+
+// newTestMergedBackend creates a post-merge chain
+func newTestMergedBackend(t *testing.T, n int, gspec *core.Genesis, generator func(i int, b *core.BlockGen)) *testBackend {
+	backend := &testBackend{
+		chainConfig: gspec.Config,
+		engine:      beacon.NewFaker(),
+		chaindb:     rawdb.NewMemoryDatabase(),
+	}
+	// Generate blocks for testing
+	_, blocks, _ := core.GenerateChainWithGenesis(gspec, backend.engine, n, generator)
+
+	// Import the canonical chain
+	cacheConfig := &core.CacheConfig{
+		TrieCleanLimit:    256,
+		TrieDirtyLimit:    256,
+		TrieTimeLimit:     5 * time.Minute,
+		SnapshotLimit:     0,
+		TrieDirtyDisabled: true, // Archive mode
+	}
+	chain, err := core.NewBlockChain(backend.chaindb, cacheConfig, gspec, nil, backend.engine, vm.Config{}, nil)
+	if err != nil {
+		t.Fatalf("failed to create tester chain: %v", err)
+	}
+	if n, err := chain.InsertChain(blocks); err != nil {
+		t.Fatalf("block %d: failed to insert into chain: %v", n, err)
+	}
+	backend.chain = chain
+	return backend
+}
+
+func TestAnalyzeAccessListUseBlock(t *testing.T) {
+	accounts := newAccounts(1)
+	target := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	aa := common.HexToAddress("0x000000000000000000000000000000000000aaaa")
+	genesis := &core.Genesis{
+		Config: params.AllDevChainProtocolChanges,
+		Alloc: types.GenesisAlloc{
+			accounts[0].addr: {Balance: big.NewInt(1 * params.Ether)},
+			target: {Nonce: 1, Code: []byte{
+				byte(vm.PUSH0), byte(vm.PUSH0), byte(vm.PUSH0), byte(vm.PUSH0), byte(vm.PUSH0), byte(vm.PUSH2), byte(0xaa), byte(0xaa), byte(vm.GAS), byte(vm.CALL),
+			}},
+			aa: {Nonce: 1, Code: []byte{
+				byte(vm.CHAINID), byte(vm.PUSH0), byte(vm.SSTORE),
+			}},
+		},
+	}
+	genBlocks := 1
+	signer := types.HomesteadSigner{}
+	var baseFee = new(big.Int)
+	backend := newTestMergedBackend(t, genBlocks, genesis, func(i int, b *core.BlockGen) {
+		tx, _ := types.SignTx(types.NewTx(&types.LegacyTx{
+			Nonce:    uint64(i),
+			To:       &target,
+			Value:    big.NewInt(0),
+			Gas:      5 * params.TxGas,
+			GasPrice: b.BaseFee(),
+			Data:     nil}),
+			signer, accounts[0].key)
+		b.AddTx(tx)
+		baseFee.Set(b.BaseFee())
+	})
+	defer backend.chain.Stop()
+	api := tracers.NewAPI(backend)
+	res, err := api.AnalyzeAccessListUseBlock(context.Background(), genBlocks)
+	if err != nil {
+		t.Fatalf("analysis failed: %v", err)
+	}
+	raw, _ := json.MarshalIndent(res, "", "  ")
+	fmt.Println(string(raw))
 }

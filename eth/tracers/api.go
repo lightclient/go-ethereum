@@ -36,6 +36,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/tracers/logger"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
@@ -580,6 +581,192 @@ func (api *API) StandardTraceBadBlockToFile(ctx context.Context, hash common.Has
 		return nil, fmt.Errorf("bad block %#x not found", hash)
 	}
 	return api.standardTraceBlockToFile(ctx, block, config)
+}
+
+type AccessListAnalysis struct {
+	Number         uint64                              `json:"number"`
+	Hash           common.Hash                         `json:"hash"`
+	Original       uint64                              `json:"current"`
+	WithAccessList uint64                              `json:"accessList"`
+	Transactions   map[common.Hash]*AccessListAnalysis `json:"txs,omitempty"`
+}
+
+func (api *API) AnalyzeAccessListUseBlock(ctx context.Context, num int) (*AccessListAnalysis, error) {
+	block, err := api.backend.BlockByNumber(ctx, rpc.BlockNumber(num))
+	if err != nil {
+		return nil, err
+	}
+	if block == nil {
+		return nil, fmt.Errorf("block %d not found", num)
+	}
+	return api.analyzeAccessListUseBlock(ctx, block)
+}
+
+func (api *API) analyzeAccessListUseBlock(ctx context.Context, block *types.Block) (*AccessListAnalysis, error) {
+	if block.NumberU64() == 0 {
+		return nil, errors.New("genesis is not traceable")
+	}
+
+	// First run the prestate tracer so that we can determine all the accessed elements in state.
+	cfg := `{"tracer": "prestateTracer", "tracerConfig": {"diffMode": true, "disableCode": true, "disableStorage": false}}`
+	var tcfg TraceConfig
+	err := json.Unmarshal([]byte(cfg), &tcfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Prepare base state
+	parent, err := api.blockByNumberAndHash(ctx, rpc.BlockNumber(block.NumberU64()-1), block.ParentHash())
+	if err != nil {
+		return nil, err
+	}
+	statedb, release, err := api.backend.StateAtBlock(ctx, parent, defaultTraceReexec, nil, true, false)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	// Run system calls
+	blockCtx := core.NewEVMBlockContext(block.Header(), api.chainContext(ctx), nil)
+	if beaconRoot := block.BeaconRoot(); beaconRoot != nil {
+		vmenv := vm.NewEVM(blockCtx, vm.TxContext{}, statedb, api.backend.ChainConfig(), vm.Config{})
+		core.ProcessBeaconBlockRoot(*beaconRoot, vmenv, statedb)
+	}
+	if api.backend.ChainConfig().IsPrague(block.Number(), block.Time()) {
+		vmenv := vm.NewEVM(blockCtx, vm.TxContext{}, statedb, api.backend.ChainConfig(), vm.Config{})
+		core.ProcessParentBlockHash(block.ParentHash(), vmenv, statedb)
+	}
+	statedbCopy := statedb.Copy()
+
+	var (
+		txs       = block.Transactions()
+		blockHash = block.Hash()
+		signer    = types.MakeSigner(api.backend.ChainConfig(), block.Number(), block.Time())
+		results   = make([]*txTraceResult, len(txs))
+		analysis  = AccessListAnalysis{Transactions: make(map[common.Hash]*AccessListAnalysis)}
+		usedGas   uint64
+	)
+	for i, tx := range txs {
+		msg, _ := core.TransactionToMessage(tx, signer, block.BaseFee())
+		txctx := &Context{
+			BlockHash:   blockHash,
+			BlockNumber: block.Number(),
+			TxIndex:     i,
+			TxHash:      tx.Hash(),
+		}
+		tracer, err := DefaultDirectory.New(*tcfg.Tracer, txctx, tcfg.TracerConfig, api.backend.ChainConfig())
+		if err != nil {
+			return nil, err
+		}
+		vmenv := vm.NewEVM(blockCtx, vm.TxContext{GasPrice: msg.GasPrice, BlobFeeCap: msg.BlobGasFeeCap}, statedb, api.backend.ChainConfig(), vm.Config{Tracer: tracer.Hooks, NoBaseFee: true})
+		statedb.SetTxContext(txctx.TxHash, txctx.TxIndex)
+		rec, err := core.ApplyTransactionWithEVM(msg, api.backend.ChainConfig(), new(core.GasPool).AddGas(msg.GasLimit), statedb, txctx.BlockNumber, txctx.BlockHash, tx, &usedGas, vmenv)
+		if err != nil {
+			return nil, fmt.Errorf("tracing failed: %w", err)
+		}
+		analysis.Transactions[tx.Hash()] = &AccessListAnalysis{Original: rec.GasUsed}
+
+		res, err := tracer.GetResult()
+		if err != nil {
+			return nil, err
+		}
+		results[i] = &txTraceResult{TxHash: tx.Hash(), Result: res}
+	}
+
+	// Pull out the touched state from the post stateMap.
+	var touches []stateMap
+	for _, raw := range results {
+		var res prestateResult
+		err := json.Unmarshal(raw.Result.(json.RawMessage), &res)
+		if err != nil {
+			return nil, err
+		}
+		touches = append(touches, res.Post)
+	}
+
+	// Build the access list from touched elements of the regular block execution.
+	var accessLists []types.AccessList
+	for i, touched := range touches {
+		al := make([]types.AccessTuple, 0)
+
+		for addr, acc := range touched {
+			var (
+				tx        = block.Transactions()[i]
+				sender, _ = signer.Sender(tx)
+				to        = tx.To()
+			)
+			// The destination / creation address is already warm, so only add to
+			// access list if it rational to do. This makes sense once there are at
+			// least 20 distinct storage slots touched, because with the access list
+			// each cold touch is 100 gas cheaper. The cost of warming an account via
+			// access list is 1900. Since the destination is already warm, saving 100
+			// gas on 19 storage touches will only get us back to even for the 1900
+			// needed to re-warm the destination.
+			addrMatch := to != nil && addr == *to
+			createMatch := addr == crypto.CreateAddress(sender, tx.Nonce())
+			if (addrMatch || createMatch) && len(acc.Storage) < 20 {
+				continue
+			}
+			if addr == block.Coinbase() || addr == sender {
+				continue
+			}
+			// All good, create access list.
+			tuple := types.AccessTuple{Address: addr}
+			for key := range acc.Storage {
+				tuple.StorageKeys = append(tuple.StorageKeys, key)
+			}
+			al = append(al, tuple)
+		}
+		accessLists = append(accessLists, al)
+	}
+
+	// Reset from first call.
+	statedb = statedbCopy
+	usedGas = 0
+
+	for i, tx := range txs {
+		msg, _ := core.TransactionToMessage(tx, signer, block.BaseFee())
+		txctx := &Context{
+			BlockHash:   blockHash,
+			BlockNumber: block.Number(),
+			TxIndex:     i,
+			TxHash:      tx.Hash(),
+		}
+		// Add access list if none exists.
+		if msg.AccessList == nil {
+			msg.AccessList = accessLists[i]
+		}
+		vmenv := vm.NewEVM(blockCtx, vm.TxContext{GasPrice: msg.GasPrice, BlobFeeCap: msg.BlobGasFeeCap}, statedb, api.backend.ChainConfig(), vm.Config{NoBaseFee: true})
+		statedb.SetTxContext(txctx.TxHash, txctx.TxIndex)
+		rec, err := core.ApplyTransactionWithEVM(msg, api.backend.ChainConfig(), new(core.GasPool).AddGas(msg.GasLimit), statedb, txctx.BlockNumber, txctx.BlockHash, tx, &usedGas, vmenv)
+		if err != nil {
+			return nil, fmt.Errorf("tracing failed: %w", err)
+		}
+		curr := analysis.Transactions[tx.Hash()]
+		curr.WithAccessList = rec.GasUsed
+	}
+
+	analysis.Number = block.Number().Uint64()
+	analysis.Hash = block.Hash()
+	analysis.Original = block.GasUsed()
+	analysis.WithAccessList = usedGas
+
+	return &analysis, nil
+}
+
+type prestateResult struct {
+	Pre  stateMap
+	Post stateMap
+}
+
+type stateMap = map[common.Address]*account
+
+type account struct {
+	Balance *hexutil.Big                `json:"balance,omitempty"`
+	Code    []byte                      `json:"code,omitempty"`
+	Nonce   uint64                      `json:"nonce,omitempty"`
+	Storage map[common.Hash]common.Hash `json:"storage,omitempty"`
+	empty   bool
 }
 
 // traceBlock configures a new tracer according to the provided configuration, and
