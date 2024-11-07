@@ -328,6 +328,25 @@ func TestAnalyzeAccessListUseBlock(t *testing.T) {
 			Data:     nil}),
 			signer, accounts[0].key)
 		b.AddTx(tx)
+
+		tx2, _ := types.SignTx(types.NewTx(&types.LegacyTx{
+			Nonce:    uint64(i + 1),
+			To:       &target,
+			Value:    big.NewInt(0),
+			Gas:      5 * params.TxGas,
+			GasPrice: b.BaseFee(),
+			Data:     nil}),
+			signer, accounts[0].key)
+		b.AddTx(tx2)
+		tx3, _ := types.SignTx(types.NewTx(&types.LegacyTx{
+			Nonce:    uint64(i + 2),
+			To:       &target,
+			Value:    big.NewInt(0),
+			Gas:      5 * params.TxGas,
+			GasPrice: b.BaseFee(),
+			Data:     nil}),
+			signer, accounts[0].key)
+		b.AddTx(tx3)
 		baseFee.Set(b.BaseFee())
 	})
 	defer backend.chain.Stop()

@@ -17,7 +17,6 @@
 package native
 
 import (
-	"bytes"
 	"encoding/json"
 	"math/big"
 	"sync/atomic"
@@ -208,53 +207,16 @@ func (t *prestateTracer) processDiffState() {
 		if _, ok := t.deleted[addr]; ok {
 			continue
 		}
-		modified := false
 		postAccount := &account{Storage: make(map[common.Hash]common.Hash)}
-		newBalance := t.env.StateDB.GetBalance(addr).ToBig()
-		newNonce := t.env.StateDB.GetNonce(addr)
-
-		if newBalance.Cmp(t.pre[addr].Balance) != 0 {
-			modified = true
-			postAccount.Balance = newBalance
-		}
-		if newNonce != t.pre[addr].Nonce {
-			modified = true
-			postAccount.Nonce = newNonce
-		}
-		if !t.config.DisableCode {
-			newCode := t.env.StateDB.GetCode(addr)
-			if !bytes.Equal(newCode, t.pre[addr].Code) {
-				modified = true
-				postAccount.Code = newCode
-			}
-		}
+		postAccount.Nonce = t.pre[addr].Nonce
+		postAccount.Balance = t.pre[addr].Balance
 
 		if !t.config.DisableStorage {
 			for key, val := range state.Storage {
-				// don't include the empty slot
-				if val == (common.Hash{}) {
-					delete(t.pre[addr].Storage, key)
-				}
-
-				newVal := t.env.StateDB.GetState(addr, key)
-				if val == newVal {
-					// Omit unchanged slots
-					delete(t.pre[addr].Storage, key)
-				} else {
-					modified = true
-					if newVal != (common.Hash{}) {
-						postAccount.Storage[key] = newVal
-					}
-				}
+				postAccount.Storage[key] = val
 			}
 		}
-
-		if modified {
-			t.post[addr] = postAccount
-		} else {
-			// if state is not modified, then no need to include into the pre state
-			delete(t.pre, addr)
-		}
+		t.post[addr] = postAccount
 	}
 }
 

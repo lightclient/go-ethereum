@@ -588,7 +588,7 @@ type AccessListAnalysis struct {
 	Hash           common.Hash             `json:"hash"`
 	Original       uint64                  `json:"original"`
 	WithAccessList uint64                  `json:"withList"`
-	Transactions   map[common.Hash]*TxInfo `json:"txs,omitempty"`
+	Transactions   map[common.Hash]*TxInfo `json:"byTx"`
 }
 
 type TxInfo struct {
@@ -678,6 +678,8 @@ func (api *API) analyzeAccessListUseBlock(ctx context.Context, block *types.Bloc
 		results[i] = &txTraceResult{TxHash: tx.Hash(), Result: res}
 	}
 
+	// So it turns out the state map is the wrong thing to use, we need to chreate the witness.
+
 	// Pull out the touched state from the post stateMap.
 	var touches []stateMap
 	for _, raw := range results {
@@ -724,6 +726,11 @@ func (api *API) analyzeAccessListUseBlock(ctx context.Context, block *types.Bloc
 		}
 		accessLists = append(accessLists, al)
 	}
+	raw, _ := json.MarshalIndent(touches, "", "  ")
+	fmt.Println("len(touches)", len(touches))
+	fmt.Println(string(raw))
+	raw, _ = json.MarshalIndent(accessLists, "", "  ")
+	fmt.Println(string(raw))
 
 	// Reset from first call.
 	statedb = statedbCopy
