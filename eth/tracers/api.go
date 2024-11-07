@@ -747,7 +747,7 @@ func (api *API) analyzeAccessListUseBlock(ctx context.Context, block *types.Bloc
 		}
 		// Add access list if none exists.
 		var alAdded bool
-		if msg.AccessList == nil {
+		if len(msg.AccessList) == 0 {
 			alAdded = true
 			msg.AccessList = accessLists[i]
 		}
@@ -784,6 +784,46 @@ type account struct {
 	Nonce   uint64                      `json:"nonce,omitempty"`
 	Storage map[common.Hash]common.Hash `json:"storage,omitempty"`
 	empty   bool
+}
+
+func (api *API) Analysis(ctx context.Context, hash common.Hash, config *TraceConfig) (interface{}, error) {
+	found, _, blockHash, blockNumber, index, err := api.backend.GetTransaction(ctx, hash)
+	if err != nil {
+		return nil, ethapi.NewTxIndexingError()
+	}
+	// Only mined txes are supported
+	if !found {
+		return nil, errTxNotFound
+	}
+	// It shouldn't happen in practice.
+	if blockNumber == 0 {
+		return nil, errors.New("genesis is not traceable")
+	}
+	reexec := defaultTraceReexec
+	if config != nil && config.Reexec != nil {
+		reexec = *config.Reexec
+	}
+	block, err := api.blockByNumberAndHash(ctx, rpc.BlockNumber(blockNumber), blockHash)
+	if err != nil {
+		return nil, err
+	}
+	tx, vmctx, statedb, release, err := api.backend.StateAtTransaction(ctx, block, int(index), reexec)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	msg, err := core.TransactionToMessage(tx, types.MakeSigner(api.backend.ChainConfig(), block.Number(), block.Time()), block.BaseFee())
+	if err != nil {
+		return nil, err
+	}
+
+	txctx := &Context{
+		BlockHash:   blockHash,
+		BlockNumber: block.Number(),
+		TxIndex:     int(index),
+		TxHash:      hash,
+	}
+	return api.traceTx(ctx, tx, msg, txctx, vmctx, statedb, config)
 }
 
 // traceBlock configures a new tracer according to the provided configuration, and
