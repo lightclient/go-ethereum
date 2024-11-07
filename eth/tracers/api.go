@@ -584,11 +584,16 @@ func (api *API) StandardTraceBadBlockToFile(ctx context.Context, hash common.Has
 }
 
 type AccessListAnalysis struct {
-	Number         uint64                              `json:"number"`
-	Hash           common.Hash                         `json:"hash"`
-	Original       uint64                              `json:"current"`
-	WithAccessList uint64                              `json:"accessList"`
-	Transactions   map[common.Hash]*AccessListAnalysis `json:"txs,omitempty"`
+	Number         uint64                  `json:"number"`
+	Hash           common.Hash             `json:"hash"`
+	Original       uint64                  `json:"original"`
+	WithAccessList uint64                  `json:"withList"`
+	Transactions   map[common.Hash]*TxInfo `json:"txs,omitempty"`
+}
+
+type TxInfo struct {
+	Original       uint64 `json:"original"`
+	WithAccessList uint64 `json:"withList"`
 }
 
 func (api *API) AnalyzeAccessListUseBlock(ctx context.Context, num int) (*AccessListAnalysis, error) {
@@ -643,7 +648,7 @@ func (api *API) analyzeAccessListUseBlock(ctx context.Context, block *types.Bloc
 		blockHash = block.Hash()
 		signer    = types.MakeSigner(api.backend.ChainConfig(), block.Number(), block.Time())
 		results   = make([]*txTraceResult, len(txs))
-		analysis  = AccessListAnalysis{Transactions: make(map[common.Hash]*AccessListAnalysis)}
+		analysis  = AccessListAnalysis{Transactions: make(map[common.Hash]*TxInfo)}
 		usedGas   uint64
 	)
 	for i, tx := range txs {
@@ -664,7 +669,7 @@ func (api *API) analyzeAccessListUseBlock(ctx context.Context, block *types.Bloc
 		if err != nil {
 			return nil, fmt.Errorf("tracing failed: %w", err)
 		}
-		analysis.Transactions[tx.Hash()] = &AccessListAnalysis{Original: rec.GasUsed}
+		analysis.Transactions[tx.Hash()] = &TxInfo{Original: rec.GasUsed}
 
 		res, err := tracer.GetResult()
 		if err != nil {
