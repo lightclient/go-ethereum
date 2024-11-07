@@ -592,8 +592,8 @@ type AccessListAnalysis struct {
 }
 
 type TxInfo struct {
-	Original       uint64 `json:"original"`
-	WithAccessList uint64 `json:"withList"`
+	Original       uint64  `json:"original"`
+	WithAccessList *uint64 `json:"withList"`
 }
 
 func (api *API) AnalyzeAccessListUseBlock(ctx context.Context, num int) (*AccessListAnalysis, error) {
@@ -746,17 +746,21 @@ func (api *API) analyzeAccessListUseBlock(ctx context.Context, block *types.Bloc
 			TxHash:      tx.Hash(),
 		}
 		// Add access list if none exists.
+		var alAdded bool
 		if msg.AccessList == nil {
+			alAdded = true
 			msg.AccessList = accessLists[i]
 		}
 		vmenv := vm.NewEVM(blockCtx, vm.TxContext{GasPrice: msg.GasPrice, BlobFeeCap: msg.BlobGasFeeCap}, statedb, api.backend.ChainConfig(), vm.Config{NoBaseFee: true})
 		statedb.SetTxContext(txctx.TxHash, txctx.TxIndex)
-		_, err := core.ApplyTransactionWithEVM(msg, api.backend.ChainConfig(), new(core.GasPool).AddGas(msg.GasLimit), statedb, txctx.BlockNumber, txctx.BlockHash, tx, &usedGas, vmenv)
+		rec, err := core.ApplyTransactionWithEVM(msg, api.backend.ChainConfig(), new(core.GasPool).AddGas(msg.GasLimit), statedb, txctx.BlockNumber, txctx.BlockHash, tx, &usedGas, vmenv)
 		if err != nil {
 			return nil, fmt.Errorf("tracing failed: %w", err)
 		}
 		curr := analysis.Transactions[tx.Hash()]
-		curr.WithAccessList = 1
+		if alAdded {
+			curr.WithAccessList = &rec.GasUsed
+		}
 	}
 
 	analysis.Number = block.Number().Uint64()
