@@ -303,6 +303,8 @@ func TestAnalyzeAccessListUseBlock(t *testing.T) {
 	accounts := newAccounts(1)
 	target := common.HexToAddress("0x1111111111111111111111111111111111111111")
 	aa := common.HexToAddress("0x000000000000000000000000000000000000aaaa")
+	target2 := common.HexToAddress("0x1111111111111111111111111111111111111112")
+	bb := common.HexToAddress("0x000000000000000000000000000000000000bbbb")
 	genesis := &core.Genesis{
 		Config: params.AllDevChainProtocolChanges,
 		Alloc: types.GenesisAlloc{
@@ -312,6 +314,12 @@ func TestAnalyzeAccessListUseBlock(t *testing.T) {
 			}},
 			aa: {Nonce: 1, Code: []byte{
 				byte(vm.CHAINID), byte(vm.PUSH0), byte(vm.SSTORE),
+			}},
+			target2: {Nonce: 1, Code: []byte{
+				byte(vm.PUSH0), byte(vm.PUSH0), byte(vm.PUSH0), byte(vm.PUSH0), byte(vm.PUSH0), byte(vm.PUSH2), byte(0xbb), byte(0xbb), byte(vm.GAS), byte(vm.CALL),
+			}},
+			bb: {Nonce: 1, Code: []byte{
+				byte(vm.CHAINID), byte(vm.PUSH1), byte(0x42), byte(vm.SSTORE),
 			}},
 		},
 	}
@@ -340,7 +348,7 @@ func TestAnalyzeAccessListUseBlock(t *testing.T) {
 		b.AddTx(tx2)
 		tx3, _ := types.SignTx(types.NewTx(&types.LegacyTx{
 			Nonce:    uint64(i + 2),
-			To:       &target,
+			To:       &target2,
 			Value:    big.NewInt(0),
 			Gas:      5 * params.TxGas,
 			GasPrice: b.BaseFee(),

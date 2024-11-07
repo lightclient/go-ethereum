@@ -677,6 +677,7 @@ func (api *API) analyzeAccessListUseBlock(ctx context.Context, block *types.Bloc
 		}
 		results[i] = &txTraceResult{TxHash: tx.Hash(), Result: res}
 	}
+	analysis.Original = usedGas
 
 	// So it turns out the state map is the wrong thing to use, we need to chreate the witness.
 
@@ -750,12 +751,12 @@ func (api *API) analyzeAccessListUseBlock(ctx context.Context, block *types.Bloc
 		}
 		vmenv := vm.NewEVM(blockCtx, vm.TxContext{GasPrice: msg.GasPrice, BlobFeeCap: msg.BlobGasFeeCap}, statedb, api.backend.ChainConfig(), vm.Config{NoBaseFee: true})
 		statedb.SetTxContext(txctx.TxHash, txctx.TxIndex)
-		rec, err := core.ApplyTransactionWithEVM(msg, api.backend.ChainConfig(), new(core.GasPool).AddGas(msg.GasLimit), statedb, txctx.BlockNumber, txctx.BlockHash, tx, &usedGas, vmenv)
+		_, err := core.ApplyTransactionWithEVM(msg, api.backend.ChainConfig(), new(core.GasPool).AddGas(msg.GasLimit), statedb, txctx.BlockNumber, txctx.BlockHash, tx, &usedGas, vmenv)
 		if err != nil {
 			return nil, fmt.Errorf("tracing failed: %w", err)
 		}
 		curr := analysis.Transactions[tx.Hash()]
-		curr.WithAccessList = rec.GasUsed
+		curr.WithAccessList = 1
 	}
 
 	analysis.Number = block.Number().Uint64()
