@@ -108,3 +108,20 @@ func TestStructLogMarshalingOmitEmpty(t *testing.T) {
 		})
 	}
 }
+
+// TestHumanLog tests some formatting for the human-friendly logger.
+func TestHumanLog(t *testing.T) {
+	tests := []struct {
+		have *StructLog
+		want string
+	}{{
+		have: &StructLog{Pc: 42, Op: vm.CALLER, Gas: 21003, GasCost: 3},
+		want: `0x002a: CALLER cost=3 left=21003`,
+	}}
+
+	for _, tt := range tests {
+		if have := tt.have.String(); have != tt.want {
+			t.Fatalf("mismatched results\n\thave: %v\n\twant: %v", have, tt.want)
+		}
+	}
+}

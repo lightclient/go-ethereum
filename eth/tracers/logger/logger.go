@@ -94,6 +94,10 @@ func (s *StructLog) OpName() string {
 	return s.Op.String()
 }
 
+func (s *StructLog) String() string {
+	return fmt.Sprintf("%#04x: %16s cost=%d left=%9d", s.Pc, s.Op.String(), s.GasCost, s.Gas)
+}
+
 // ErrorString formats the log's error as a string.
 func (s *StructLog) ErrorString() string {
 	if s.Err != nil {
