@@ -499,8 +499,10 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 			if auth.Address == common.ZeroAddress {
 				// If the delegation is for the zero address, completely clear all
 				// delegations from the account.
-				delegation = []byte{}
+				st.state.SetCode(authority, nil)
+				continue
 			}
+
 			st.state.SetCode(authority, delegation)
 
 			// Usually the transaction destination and delegation target are added to
