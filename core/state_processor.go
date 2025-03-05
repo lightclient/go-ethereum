@@ -309,8 +309,9 @@ func processRequestsSystemCall(requests *[][]byte, evm *vm.EVM, requestType byte
 // BeaconDepositContract.
 func ParseDepositLogs(requests *[][]byte, logs []*types.Log, config *params.ChainConfig) error {
 	deposits := make([]byte, 1) // note: first byte is 0x00 (== deposit request type)
-	for _, log := range logs {
+	for i, log := range logs {
 		if log.Address == config.DepositContractAddress {
+			fmt.Println(i, log.Address, common.Bytes2Hex(log.Data))
 			request, err := types.DepositLogToRequest(log.Data)
 			if err != nil {
 				return fmt.Errorf("unable to parse deposit data: %v", err)
