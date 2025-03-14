@@ -50,6 +50,7 @@ func TestJumpDestAnalysis(t *testing.T) {
 		{[]byte{byte(PUSH32)}, 0b1111_1111, 2},
 		{[]byte{byte(PUSH32)}, 0b1111_1111, 3},
 		{[]byte{byte(PUSH32)}, 0b0000_0001, 4},
+		{[]byte{byte(DUPN), byte(PUSH1), 0x01, 0x01}, 0b0000_0010, 0},
 	}
 	for i, test := range tests {
 		ret := codeBitmap(test.code)

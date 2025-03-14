@@ -937,3 +937,72 @@ func TestDelegatedAccountAccessCost(t *testing.T) {
 		}
 	}
 }
+
+func TestSWAPNandDUPN(t *testing.T) {
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	addr := common.BytesToAddress([]byte("contract"))
+
+	for i, tc := range []struct {
+		code []byte
+		want byte
+	}{
+		{ // DUPN
+			code: []byte{
+				byte(vm.PUSH1), 0x42,
+				byte(vm.PUSH1), 0x43,
+				byte(vm.DUPN), 0x02,
+				byte(vm.PUSH0),
+				byte(vm.SSTORE),
+			},
+			want: 0x42,
+		},
+		{ // SWAPN
+			code: []byte{
+				byte(vm.PUSH1), 0x42,
+				byte(vm.PUSH1), 0x43,
+				byte(vm.PUSH1), 0x44,
+				byte(vm.PUSH1), 0x45,
+				byte(vm.SWAPN), 0x02,
+				byte(vm.PUSH0),
+				byte(vm.SSTORE),
+			},
+			want: 0x43,
+		},
+		{ // JUMPDEST analysis should allow this jump
+			code: []byte{
+				byte(vm.PUSH1), 0x42,
+				byte(vm.PUSH1), 0x07,
+				byte(vm.JUMP),
+				byte(vm.DUPN), byte(vm.PUSH1),
+				byte(vm.JUMPDEST),
+				byte(vm.POP),
+				byte(vm.PUSH1), 0x44,
+				byte(vm.PUSH0),
+				byte(vm.SSTORE),
+			},
+			want: 0x44,
+		},
+	} {
+		var step = 0
+		_, _, err := Execute(tc.code, nil, &Config{
+			ChainConfig: params.MergedTestChainConfig,
+			State:       statedb,
+			EVMConfig: vm.Config{
+				Tracer: &tracing.Hooks{
+					OnOpcode: func(pc uint64, op byte, gas, cost uint64, scope tracing.OpContext, rData []byte, depth int, err error) {
+						// Uncomment to investigate failures:
+						// t.Logf("%d: %v %d", step, vm.OpCode(op).String(), cost)
+						step++
+					},
+				},
+			},
+		})
+		if err != nil {
+			fmt.Println("err", err)
+		}
+		have := statedb.GetState(addr, common.Hash{})
+		if want := tc.want; have != common.BytesToHash([]byte{want}) {
+			t.Fatalf("testcase %d, wrong value: have %d want %d", i, have, want)
+		}
+	}
+}

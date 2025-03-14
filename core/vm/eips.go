@@ -533,6 +533,51 @@ func enable4762(jt *JumpTable) {
 	}
 }
 
+// opDupN implements the DUPN opcode
+func opDupN(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byte, error) {
+	codeLen := uint64(len(scope.Contract.Code))
+	*pc += 1
+	if *pc < codeLen {
+		pos := int(scope.Contract.Code[*pc])
+		if sLen := scope.Stack.len(); sLen < pos {
+			return nil, &ErrStackUnderflow{stackLen: sLen, required: pos}
+		}
+		scope.Stack.dup(pos)
+	} else {
+		scope.Stack.push(new(uint256.Int))
+	}
+	return nil, nil
+}
+
+// opSwapN implements the SWAPN opcode
+func opSwapN(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byte, error) {
+	codeLen := uint64(len(scope.Contract.Code))
+	*pc += 1
+	if *pc < codeLen {
+		pos := int(scope.Contract.Code[*pc]) + 1
+		if sLen := scope.Stack.len(); sLen < pos {
+			return nil, &ErrStackUnderflow{stackLen: sLen, required: pos}
+		}
+		scope.Stack.swap(pos)
+	}
+	return nil, nil
+}
+
+func enableExtendedSwapAndDup(jt *JumpTable) {
+	jt[DUPN] = &operation{
+		execute:     opDupN,
+		constantGas: GasFastestStep,
+		minStack:    minStack(0, 1),
+		maxStack:    maxStack(0, 1),
+	}
+	jt[SWAPN] = &operation{
+		execute:     opSwapN,
+		constantGas: GasFastestStep,
+		minStack:    minStack(0, 0),
+		maxStack:    maxStack(0, 0),
+	}
+}
+
 // enableEOF applies the EOF changes.
 // OBS! For EOF, there are two changes:
 //  1. Two separate jumptables are required. One, EOF-jumptable, is used by

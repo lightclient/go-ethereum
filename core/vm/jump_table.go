@@ -105,6 +105,7 @@ func newEOFInstructionSetForTesting() JumpTable {
 func newPragueInstructionSet() JumpTable {
 	instructionSet := newCancunInstructionSet()
 	enable7702(&instructionSet) // EIP-7702 Setcode transaction type
+	enableExtendedSwapAndDup(&instructionSet)
 	return validate(instructionSet)
 }
 
