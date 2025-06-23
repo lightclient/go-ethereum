@@ -136,7 +136,7 @@ const (
 	MaxCodeSizeEIP170      = 24576                 // Maximum bytecode to permit for a contract
 	MaxInitCodeSizeEIP3860 = 2 * MaxCodeSizeEIP170 // Maximum initcode to permit in a creation transaction and create instructions
 
-	MaxCodeSizeEIP7907        = 268435456              // Maximum bytecode permitted per contract after EIP-7907
+	MaxCodeSizeEIP7907        = 262144                 // Maximum bytecode permitted per contract after EIP-7907
 	MaxInitCodeSizeEIP7907    = 2 * MaxCodeSizeEIP7907 // Maximum initcode to permit in a creation transaction and create instructions
 	CodeReadPerWordGasEIP7907 = 2                      // Cost per word to read code from disk.
 

@@ -18,6 +18,7 @@ package vm
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
@@ -324,7 +325,7 @@ func ceil32(n int) uint64 {
 	if r == 0 {
 		return uint64(n)
 	} else {
-		return uint64(r + n)
+		return uint64(n + 32 - r)
 	}
 }
 
@@ -334,7 +335,9 @@ func calcColdCodeAccessGasCost(evm *EVM, addr common.Address) uint64 {
 	if size <= params.MaxCodeSizeEIP170 {
 		return 0
 	}
-	return (ceil32(size) - params.MaxCodeSizeEIP7907) * params.CodeReadPerWordGasEIP7907 / 32
+	excess := ceil32(size - params.MaxCodeSizeEIP170)
+	fmt.Println("excess", excess, "cost", (excess*params.CodeReadPerWordGasEIP7907)/32)
+	return (excess * params.CodeReadPerWordGasEIP7907) / 32
 }
 
 func makeCallVariantGasCallEIP7907(oldCalculator gasFunc) gasFunc {
@@ -425,27 +428,25 @@ func gasExtCodeCopyEIP7907(evm *EVM, contract *Contract, stack *Stack, mem *Memo
 		return 0, err
 	}
 	addr := common.Address(stack.peek().Bytes20())
-	var total uint64
 	// Check slot presence in the access list
 	if !evm.StateDB.AddressInAccessList(addr) {
 		evm.StateDB.AddAddressToAccessList(addr)
+		var overflow bool
 		// We charge (cold-warm), since 'warm' is already charged as constantGas
-
-		if !contract.UseGas(gas, evm.Config.Tracer, tracing.GasChangeCallStorageColdAccess) {
-			return 0, ErrOutOfGas
+		if gas, overflow = math.SafeAdd(gas, params.ColdAccountAccessCostEIP2929-params.WarmStorageReadCostEIP2929); overflow {
+			return 0, ErrGasUintOverflow
 		}
-		total += gas
 	}
 
 	// Check address code presence in the access list
 	if !evm.StateDB.AddressCodeInAccessList(addr) {
 		cost := calcColdCodeAccessGasCost(evm, addr)
 		evm.StateDB.AddAddressCodeToAccessList(addr)
-		if !contract.UseGas(cost, evm.Config.Tracer, tracing.GasChangeCallStorageColdAccess) {
-			return 0, ErrOutOfGas
+		var overflow bool
+		// We charge (cold-warm), since 'warm' is already charged as constantGas
+		if gas, overflow = math.SafeAdd(gas, cost); overflow {
+			return 0, ErrGasUintOverflow
 		}
-		total += cost
 	}
-
-	return total, nil
+	return gas, nil
 }
