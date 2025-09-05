@@ -156,6 +156,7 @@ var (
 		BlobScheduleConfig: &BlobScheduleConfig{
 			Cancun: DefaultCancunBlobConfig,
 			Prague: DefaultPragueBlobConfig,
+			Osaka:  DefaultOsakaBlobConfig,
 		},
 	}
 	// AllEthashProtocolChanges contains every protocol change (EIPs) introduced
