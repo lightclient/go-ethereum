@@ -32,10 +32,14 @@ const (
 
 	// KeepPostMerge sets the history pruning point to the merge activation block.
 	KeepPostMerge
+
+	// KeepNone skips downloading block bodies and receipts entirely during snap sync,
+	// except the ~64 blocks near the head that snap sync requires to function.
+	KeepNone
 )
 
 func (m HistoryMode) IsValid() bool {
-	return m <= KeepPostMerge
+	return m <= KeepNone
 }
 
 func (m HistoryMode) String() string {
@@ -44,6 +48,8 @@ func (m HistoryMode) String() string {
 		return "all"
 	case KeepPostMerge:
 		return "postmerge"
+	case KeepNone:
+		return "none"
 	default:
 		return fmt.Sprintf("invalid HistoryMode(%d)", m)
 	}
@@ -64,8 +70,10 @@ func (m *HistoryMode) UnmarshalText(text []byte) error {
 		*m = KeepAll
 	case "postmerge":
 		*m = KeepPostMerge
+	case "none":
+		*m = KeepNone
 	default:
-		return fmt.Errorf(`unknown sync mode %q, want "all" or "postmerge"`, text)
+		return fmt.Errorf(`unknown sync mode %q, want "all", "postmerge" or "none"`, text)
 	}
 	return nil
 }

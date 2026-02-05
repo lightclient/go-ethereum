@@ -4557,3 +4557,136 @@ func TestSetHeadBeyondRootFinalizedBug(t *testing.T) {
 			currentFinal.Number.Uint64())
 	}
 }
+
+func TestInsertChainWithKeepNone(t *testing.T) {
+	const chainLength = 64
+
+	// Configure and generate a sample block chain
+	var (
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		address = crypto.PubkeyToAddress(key.PublicKey)
+		funds   = big.NewInt(1000000000000000)
+		gspec   = &Genesis{
+			Config:  params.TestChainConfig,
+			Alloc:   types.GenesisAlloc{address: {Balance: funds}},
+			BaseFee: big.NewInt(params.InitialBaseFee),
+		}
+		signer = types.LatestSigner(gspec.Config)
+		engine = beacon.New(ethash.NewFaker())
+	)
+	_, blocks, receipts := GenerateChainWithGenesis(gspec, engine, chainLength, func(i int, block *BlockGen) {
+		block.SetCoinbase(common.Address{0x00})
+		tx, err := types.SignTx(types.NewTransaction(block.TxNonce(address), common.Address{0x00}, big.NewInt(1000), params.TxGas, block.header.BaseFee, nil), signer, key)
+		if err != nil {
+			panic(err)
+		}
+		block.AddTx(tx)
+	})
+
+	// Run the actual tests with different cutoff/ancientLimit combos.
+	t.Run("cutoff-50/ancientLimit-50", func(t *testing.T) {
+		testInsertChainWithKeepNone(t, 50, 50, gspec, blocks, receipts)
+	})
+	t.Run("cutoff-50/ancientLimit-64", func(t *testing.T) {
+		testInsertChainWithKeepNone(t, 50, 64, gspec, blocks, receipts)
+	})
+}
+
+func testInsertChainWithKeepNone(t *testing.T, cutoff uint64, ancientLimit uint64, genesis *Genesis, blocks []*types.Block, receipts []types.Receipts) {
+	db, _ := rawdb.Open(rawdb.NewMemoryDatabase(), rawdb.OpenOptions{})
+	defer db.Close()
+
+	options := DefaultConfig().WithStateScheme(rawdb.PathScheme)
+	options.ChainHistoryMode = history.KeepNone
+
+	chain, err := NewBlockChain(db, genesis, beacon.New(ethash.NewFaker()), options)
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer chain.Stop()
+
+	cutoffBlock := blocks[cutoff-1]
+
+	// Simulate what the downloader does in KeepNone mode: dynamically set the prune point
+	chain.SetHistoryPrunePoint(cutoffBlock.NumberU64(), cutoffBlock.Hash())
+
+	var (
+		headersBefore []*types.Header
+		blocksAfter   []*types.Block
+		receiptsAfter []types.Receipts
+	)
+	for i, b := range blocks {
+		if b.NumberU64() < cutoffBlock.NumberU64() {
+			headersBefore = append(headersBefore, b.Header())
+		} else {
+			blocksAfter = append(blocksAfter, b)
+			receiptsAfter = append(receiptsAfter, receipts[i])
+		}
+	}
+	if n, err := chain.InsertHeadersBeforeCutoff(headersBefore); err != nil {
+		t.Fatalf("failed to insert headers before cutoff %d: %v", n, err)
+	}
+	if n, err := chain.InsertReceiptChain(blocksAfter, types.EncodeBlockReceiptLists(receiptsAfter), ancientLimit); err != nil {
+		t.Fatalf("failed to insert receipt %d: %v", n, err)
+	}
+
+	// Verify head pointers
+	headSnap := chain.CurrentSnapBlock()
+	if headSnap.Hash() != blocks[len(blocks)-1].Hash() {
+		t.Errorf("head snap block #%d: header mismatch: want: %v, got: %v", headSnap.Number, blocks[len(blocks)-1].Hash(), headSnap.Hash())
+	}
+	headHeader := chain.CurrentHeader()
+	if headHeader.Hash() != blocks[len(blocks)-1].Hash() {
+		t.Errorf("head header #%d: header mismatch: want: %v, got: %v", headHeader.Number, blocks[len(blocks)-1].Hash(), headHeader.Hash())
+	}
+
+	// Verify HistoryPruningCutoff returns expected value
+	pruneNum, pruneHash := chain.HistoryPruningCutoff()
+	if pruneNum != cutoffBlock.NumberU64() {
+		t.Fatalf("HistoryPruningCutoff number: want %d, got %d", cutoffBlock.NumberU64(), pruneNum)
+	}
+	if pruneHash != cutoffBlock.Hash() {
+		t.Fatalf("HistoryPruningCutoff hash: want %v, got %v", cutoffBlock.Hash(), pruneHash)
+	}
+
+	// Verify db tail
+	tail, err := db.Tail()
+	if err != nil {
+		t.Fatalf("Failed to get chain tail: %v", err)
+	}
+	if tail != cutoffBlock.NumberU64() {
+		t.Fatalf("Unexpected chain tail: want %d, got %d", cutoffBlock.NumberU64(), tail)
+	}
+
+	// Iterate over all chain data components
+	for i := 0; i < len(blocks); i++ {
+		num, hash := blocks[i].NumberU64(), blocks[i].Hash()
+
+		// Canonical headers should be visible regardless of cutoff
+		header := chain.GetHeaderByNumber(num)
+		if header == nil || header.Hash() != hash {
+			t.Errorf("block #%d: header mismatch", num)
+		}
+
+		// Block bodies and receipts before the cutoff should be non-existent
+		if num < cutoffBlock.NumberU64() {
+			body := chain.GetBody(hash)
+			if body != nil {
+				t.Fatalf("Unexpected block body: %d, cutoff: %d", num, cutoffBlock.NumberU64())
+			}
+			recs := chain.GetReceiptsByHash(hash)
+			if recs != nil {
+				t.Fatalf("Unexpected block receipts: %d, cutoff: %d", num, cutoffBlock.NumberU64())
+			}
+		} else {
+			body := chain.GetBody(hash)
+			if body == nil || len(body.Transactions) != 1 {
+				t.Fatalf("Missed block body: %d, cutoff: %d", num, cutoffBlock.NumberU64())
+			}
+			recs := chain.GetReceiptsByHash(hash)
+			if recs == nil || len(recs) != 1 {
+				t.Fatalf("Missed block receipts: %d, cutoff: %d", num, cutoffBlock.NumberU64())
+			}
+		}
+	}
+}

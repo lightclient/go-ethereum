@@ -271,7 +271,7 @@ func (d *Downloader) fetchHeaders(from uint64) error {
 	// Verify the header at configured chain cutoff, ensuring it's matched with
 	// the configured hash. Skip the check if the configured cutoff is even higher
 	// than the sync target, which is definitely not a common case.
-	if d.chainCutoffNumber != 0 && d.chainCutoffNumber >= from && d.chainCutoffNumber <= head.Number.Uint64() {
+	if d.chainCutoffNumber != 0 && d.chainCutoffHash != (common.Hash{}) && d.chainCutoffNumber >= from && d.chainCutoffNumber <= head.Number.Uint64() {
 		h := d.skeleton.Header(d.chainCutoffNumber)
 		if h == nil {
 			if d.chainCutoffNumber < tail.Number.Uint64() {

@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/history"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
@@ -730,6 +731,44 @@ func testSyncProgress(t *testing.T, protocol uint, mode SyncMode) {
 			CurrentBlock:  uint64(len(chain.blocks) - 1),
 			HighestBlock:  uint64(len(chain.blocks) - 1),
 		})
+	case <-time.NewTimer(time.Second * 3).C:
+		t.Fatalf("Failed to sync chain in three seconds")
+	}
+}
+
+// Tests that beacon sync with KeepNone history mode sets the cutoff near the pivot.
+func TestBeaconSync68SnapKeepNone(t *testing.T) {
+	success := make(chan struct{})
+	tester := newTesterWithNotification(t, SnapSync, func() {
+		close(success)
+	})
+	defer tester.terminate()
+
+	// Set KeepNone history mode on the downloader
+	tester.downloader.historyMode = history.KeepNone
+
+	chain := testChainBase.shorten(blockCacheMaxItems - 15)
+	tester.newPeer("peer", eth.ETH68, chain.blocks[1:])
+
+	if err := tester.downloader.BeaconSync(chain.blocks[len(chain.blocks)-1].Header(), nil); err != nil {
+		t.Fatalf("Failed to beacon sync chain: %v", err)
+	}
+	select {
+	case <-success:
+		// Verify the chain synced correctly
+		if bs := int(tester.chain.CurrentBlock().Number.Uint64()) + 1; bs != len(chain.blocks) {
+			t.Fatalf("synchronised blocks mismatch: have %v, want %v", bs, len(chain.blocks))
+		}
+		// Verify that the cutoff was set near the pivot (HEAD - 64)
+		cutoffNum, _ := tester.chain.HistoryPruningCutoff()
+		expectedPivot := uint64(len(chain.blocks) - 1 - fsMinFullBlocks)
+		if cutoffNum != expectedPivot {
+			t.Fatalf("HistoryPruningCutoff: want %d, got %d", expectedPivot, cutoffNum)
+		}
+		// Verify the downloader's chainCutoffNumber was updated
+		if tester.downloader.chainCutoffNumber != expectedPivot {
+			t.Fatalf("chainCutoffNumber: want %d, got %d", expectedPivot, tester.downloader.chainCutoffNumber)
+		}
 	case <-time.NewTimer(time.Second * 3).C:
 		t.Fatalf("Failed to sync chain in three seconds")
 	}

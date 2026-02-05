@@ -752,9 +752,33 @@ func (bc *BlockChain) initializeHistoryPruning(latest uint64) error {
 		bc.historyPrunePoint.Store(predefinedPoint)
 		return nil
 
+	case history.KeepNone:
+		// On restart (freezer tail > 0), set the prune point from the freezer tail
+		// so APIs/filters/peers know our actual data availability.
+		if freezerTail > 0 {
+			hash := rawdb.ReadCanonicalHash(bc.db, freezerTail)
+			bc.historyPrunePoint.Store(&history.PrunePoint{
+				BlockNumber: freezerTail,
+				BlockHash:   hash,
+			})
+		}
+		// On fresh start (freezerTail == 0), leave prune point unset.
+		// The downloader will set it dynamically once the sync target is known.
+		return nil
+
 	default:
 		return fmt.Errorf("invalid history mode: %d", bc.cfg.ChainHistoryMode)
 	}
+}
+
+// SetHistoryPrunePoint updates the history prune point at runtime.
+// Used by the downloader in KeepNone mode once the sync target is known.
+func (bc *BlockChain) SetHistoryPrunePoint(number uint64, hash common.Hash) {
+	bc.historyPrunePoint.Store(&history.PrunePoint{
+		BlockNumber: number,
+		BlockHash:   hash,
+	})
+	log.Info("Updated history prune point", "block", number, "hash", hash)
 }
 
 // SetHead rewinds the local chain to a new head. Depending on whether the node
@@ -1361,7 +1385,9 @@ func (bc *BlockChain) Stop() {
 			for _, offset := range []uint64{0, 1, state.TriesInMemory - 1} {
 				if number := bc.CurrentBlock().Number.Uint64(); number > offset {
 					recent := bc.GetBlockByNumber(number - offset)
-
+					if recent == nil {
+						continue
+					}
 					log.Info("Writing cached state to disk", "block", recent.Number(), "hash", recent.Hash(), "root", recent.Root())
 					if err := triedb.Commit(recent.Root(), true); err != nil {
 						log.Error("Failed to commit recent state trie", "err", err)

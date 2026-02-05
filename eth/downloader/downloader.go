@@ -27,6 +27,7 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/history"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -129,6 +130,10 @@ type Downloader struct {
 	chainCutoffNumber uint64
 	chainCutoffHash   common.Hash
 
+	// historyMode is the configured chain history mode, used to enable
+	// dynamic cutoff computation for KeepNone mode.
+	historyMode history.HistoryMode
+
 	// Channels
 	headerProcCh chan *headerTask // Channel to feed the header processor new tasks
 
@@ -226,11 +231,19 @@ type BlockChain interface {
 	// HistoryPruningCutoff returns the configured history pruning point.
 	// Block bodies along with the receipts will be skipped for synchronization.
 	HistoryPruningCutoff() (uint64, common.Hash)
+
+	// SetHistoryPrunePoint updates the history prune point at runtime.
+	// Used by the downloader in KeepNone mode once the sync target is known.
+	SetHistoryPrunePoint(number uint64, hash common.Hash)
 }
 
 // New creates a new downloader to fetch hashes and blocks from remote peers.
-func New(stateDb ethdb.Database, mode ethconfig.SyncMode, mux *event.TypeMux, chain BlockChain, dropPeer peerDropFn, success func()) *Downloader {
+func New(stateDb ethdb.Database, mode ethconfig.SyncMode, mux *event.TypeMux, chain BlockChain, dropPeer peerDropFn, success func(), historyMode ...history.HistoryMode) *Downloader {
 	cutoffNumber, cutoffHash := chain.HistoryPruningCutoff()
+	var hMode history.HistoryMode
+	if len(historyMode) > 0 {
+		hMode = historyMode[0]
+	}
 	dl := &Downloader{
 		stateDB:           stateDb,
 		moder:             newSyncModer(mode, chain, stateDb),
@@ -240,6 +253,7 @@ func New(stateDb ethdb.Database, mode ethconfig.SyncMode, mux *event.TypeMux, ch
 		blockchain:        chain,
 		chainCutoffNumber: cutoffNumber,
 		chainCutoffHash:   cutoffHash,
+		historyMode:       hMode,
 		dropPeer:          dropPeer,
 		headerProcCh:      make(chan *headerTask, 1),
 		quitCh:            make(chan struct{}),
@@ -510,6 +524,22 @@ func (d *Downloader) syncToHead() (err error) {
 			// Write out the pivot into the database so a rollback beyond it will
 			// reenable snap sync
 			rawdb.WriteLastPivotNumber(d.stateDB, pivotNumber)
+		}
+	}
+	// For KeepNone mode, set the cutoff to just before the pivot block so only
+	// the minimum blocks needed for snap sync are downloaded with bodies/receipts.
+	// For KeepNone mode, set the cutoff to just before the pivot block so only
+	// the minimum blocks needed for snap sync are downloaded with bodies/receipts.
+	if d.historyMode == history.KeepNone && mode == ethconfig.SnapSync && pivot != nil {
+		cutoff := pivot.Number.Uint64()
+		if cutoff > d.chainCutoffNumber {
+			d.chainCutoffNumber = cutoff
+			d.chainCutoffHash = pivot.Hash()
+			log.Info("KeepNone: set chain cutoff to pivot", "cutoff", cutoff)
+
+			// Update the blockchain's prune point so APIs, filters, tx indexer,
+			// and peer announcements reflect the actual data availability.
+			d.blockchain.SetHistoryPrunePoint(cutoff, pivot.Hash())
 		}
 	}
 	d.committed.Store(true)
