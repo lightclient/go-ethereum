@@ -16,13 +16,14 @@ var _ = (*payloadAttributesMarshaling)(nil)
 // MarshalJSON marshals as JSON.
 func (p PayloadAttributes) MarshalJSON() ([]byte, error) {
 	type PayloadAttributes struct {
-		Timestamp             hexutil.Uint64      `json:"timestamp"             gencodec:"required"`
-		Random                common.Hash         `json:"prevRandao"            gencodec:"required"`
-		SuggestedFeeRecipient common.Address      `json:"suggestedFeeRecipient" gencodec:"required"`
-		Withdrawals           []*types.Withdrawal `json:"withdrawals"`
-		BeaconRoot            *common.Hash        `json:"parentBeaconBlockRoot"`
-		SlotNumber            *hexutil.Uint64     `json:"slotNumber"`
-		TargetGasLimit        *hexutil.Uint64     `json:"targetGasLimit"`
+		Timestamp                 hexutil.Uint64      `json:"timestamp"             gencodec:"required"`
+		Random                    common.Hash         `json:"prevRandao"            gencodec:"required"`
+		SuggestedFeeRecipient     common.Address      `json:"suggestedFeeRecipient" gencodec:"required"`
+		Withdrawals               []*types.Withdrawal `json:"withdrawals"`
+		BeaconRoot                *common.Hash        `json:"parentBeaconBlockRoot"`
+		SlotNumber                *hexutil.Uint64     `json:"slotNumber"`
+		TargetGasLimit            *hexutil.Uint64     `json:"targetGasLimit"`
+		InclusionListTransactions []hexutil.Bytes     `json:"inclusionListTransactions"`
 	}
 	var enc PayloadAttributes
 	enc.Timestamp = hexutil.Uint64(p.Timestamp)
@@ -32,19 +33,26 @@ func (p PayloadAttributes) MarshalJSON() ([]byte, error) {
 	enc.BeaconRoot = p.BeaconRoot
 	enc.SlotNumber = (*hexutil.Uint64)(p.SlotNumber)
 	enc.TargetGasLimit = (*hexutil.Uint64)(p.TargetGasLimit)
+	if p.InclusionListTransactions != nil {
+		enc.InclusionListTransactions = make([]hexutil.Bytes, len(p.InclusionListTransactions))
+		for k, v := range p.InclusionListTransactions {
+			enc.InclusionListTransactions[k] = v
+		}
+	}
 	return json.Marshal(&enc)
 }
 
 // UnmarshalJSON unmarshals from JSON.
 func (p *PayloadAttributes) UnmarshalJSON(input []byte) error {
 	type PayloadAttributes struct {
-		Timestamp             *hexutil.Uint64     `json:"timestamp"             gencodec:"required"`
-		Random                *common.Hash        `json:"prevRandao"            gencodec:"required"`
-		SuggestedFeeRecipient *common.Address     `json:"suggestedFeeRecipient" gencodec:"required"`
-		Withdrawals           []*types.Withdrawal `json:"withdrawals"`
-		BeaconRoot            *common.Hash        `json:"parentBeaconBlockRoot"`
-		SlotNumber            *hexutil.Uint64     `json:"slotNumber"`
-		TargetGasLimit        *hexutil.Uint64     `json:"targetGasLimit"`
+		Timestamp                 *hexutil.Uint64     `json:"timestamp"             gencodec:"required"`
+		Random                    *common.Hash        `json:"prevRandao"            gencodec:"required"`
+		SuggestedFeeRecipient     *common.Address     `json:"suggestedFeeRecipient" gencodec:"required"`
+		Withdrawals               []*types.Withdrawal `json:"withdrawals"`
+		BeaconRoot                *common.Hash        `json:"parentBeaconBlockRoot"`
+		SlotNumber                *hexutil.Uint64     `json:"slotNumber"`
+		TargetGasLimit            *hexutil.Uint64     `json:"targetGasLimit"`
+		InclusionListTransactions []hexutil.Bytes     `json:"inclusionListTransactions"`
 	}
 	var dec PayloadAttributes
 	if err := json.Unmarshal(input, &dec); err != nil {
@@ -73,6 +81,12 @@ func (p *PayloadAttributes) UnmarshalJSON(input []byte) error {
 	}
 	if dec.TargetGasLimit != nil {
 		p.TargetGasLimit = (*uint64)(dec.TargetGasLimit)
+	}
+	if dec.InclusionListTransactions != nil {
+		p.InclusionListTransactions = make([][]byte, len(dec.InclusionListTransactions))
+		for k, v := range dec.InclusionListTransactions {
+			p.InclusionListTransactions[k] = v
+		}
 	}
 	return nil
 }

@@ -1914,7 +1914,7 @@ func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
 // racey behaviour. If a sidechain import is in progress, and the historic state
 // is imported, but then new canon-head is added before the actual sidechain
 // completes, then the historic state could be pruned again
-func (bc *BlockChain) insertChain(ctx context.Context, chain types.Blocks, setHead bool, makeWitness bool) (*stateless.Witness, int, error) {
+func (bc *BlockChain) insertChain(ctx context.Context, chain types.Blocks, setHead bool, makeWitness bool) (*blockProcessingResult, int, error) {
 	// If the chain is terminating, don't even bother starting up.
 	if bc.insertStopped() {
 		return nil, 0, nil
@@ -2011,8 +2011,9 @@ func (bc *BlockChain) insertChain(ctx context.Context, chain types.Blocks, setHe
 		bc.reportBadBlock(block, nil, err)
 		return nil, it.index, err
 	}
-	// Track the singleton witness from this chain insertion (if any)
-	var witness *stateless.Witness
+	// Track the result of the last processed block, which carries the singleton
+	// witness of this chain insertion (if any)
+	var result *blockProcessingResult
 
 	for ; block != nil && err == nil || errors.Is(err, ErrKnownBlock); block, err = it.next() {
 		// If the chain is terminating, stop processing blocks
@@ -2095,7 +2096,7 @@ func (bc *BlockChain) insertChain(ctx context.Context, chain types.Blocks, setHe
 		// Report the import stats before returning the various results
 		stats.processed++
 		stats.usedGas += res.usedGas
-		witness = res.witness
+		result = res
 
 		var snapDiffItems, snapBufItems common.StorageSize
 		if bc.snaps != nil {
@@ -2111,7 +2112,7 @@ func (bc *BlockChain) insertChain(ctx context.Context, chain types.Blocks, setHe
 			// After merge we expect few side chains. Simply count
 			// all blocks the CL gives us for GC processing time
 			bc.gcproc += res.procTime
-			return witness, it.index, nil // Direct block insertion of a single block
+			return result, it.index, nil // Direct block insertion of a single block
 		}
 		switch res.status {
 		case CanonStatTy:
@@ -2142,17 +2143,18 @@ func (bc *BlockChain) insertChain(ctx context.Context, chain types.Blocks, setHe
 	}
 
 	stats.ignored += it.remaining()
-	return witness, it.index, err
+	return result, it.index, err
 }
 
 // blockProcessingResult is a summary of block processing
 // used for updating the stats.
 type blockProcessingResult struct {
-	usedGas  uint64
-	procTime time.Duration
-	status   WriteStatus
-	witness  *stateless.Witness
-	stats    *ExecuteStats
+	usedGas     uint64
+	procTime    time.Duration
+	status      WriteStatus
+	witness     *stateless.Witness
+	stats       *ExecuteStats
+	ilSatisfied bool
 }
 
 func (bpr *blockProcessingResult) Witness() *stateless.Witness {
@@ -2161,6 +2163,12 @@ func (bpr *blockProcessingResult) Witness() *stateless.Witness {
 
 func (bpr *blockProcessingResult) Stats() *ExecuteStats {
 	return bpr.stats
+}
+
+// InclusionListSatisfied reports whether the block satisfies the EIP-7805
+// constraints of the inclusion list it was processed with.
+func (bpr *blockProcessingResult) InclusionListSatisfied() bool {
+	return bpr.ilSatisfied
 }
 
 // ExecuteConfig defines optional behaviors during execution.
@@ -2492,11 +2500,12 @@ func (bc *BlockChain) ProcessBlock(ctx context.Context, parentRoot common.Hash, 
 	stats.MgasPerSecond = float64(res.GasUsed) * 1000 / float64(elapsed)
 
 	return &blockProcessingResult{
-		usedGas:  res.GasUsed,
-		procTime: proctime,
-		status:   status,
-		witness:  witness,
-		stats:    stats,
+		usedGas:     res.GasUsed,
+		procTime:    proctime,
+		status:      status,
+		witness:     witness,
+		stats:       stats,
+		ilSatisfied: res.InclusionListSatisfied,
 	}, nil
 }
 
@@ -2507,7 +2516,7 @@ func (bc *BlockChain) ProcessBlock(ctx context.Context, parentRoot common.Hash, 
 // The method writes all (header-and-body-valid) blocks to disk, then tries to
 // switch over to the new chain if the TD exceeded the current chain.
 // insertSideChain is only used pre-merge.
-func (bc *BlockChain) insertSideChain(ctx context.Context, block *types.Block, it *insertIterator, makeWitness bool) (*stateless.Witness, int, error) {
+func (bc *BlockChain) insertSideChain(ctx context.Context, block *types.Block, it *insertIterator, makeWitness bool) (*blockProcessingResult, int, error) {
 	var current = bc.CurrentBlock()
 
 	// The first sidechain block error is already verified to be ErrPrunedAncestor.
@@ -2882,8 +2891,8 @@ func (bc *BlockChain) reorg(oldHead *types.Header, newHead *types.Header) error 
 // upon it and then persist the block and the associate state into the database.
 // The key difference between the InsertChain is it won't do the canonical chain
 // updating. It relies on the additional SetCanonical call to finalize the entire
-// procedure.
-func (bc *BlockChain) InsertBlockWithoutSetHead(ctx context.Context, block *types.Block, makeWitness bool) (witness *stateless.Witness, err error) {
+// procedure. The returned result is nil if the block was not processed.
+func (bc *BlockChain) InsertBlockWithoutSetHead(ctx context.Context, block *types.Block, makeWitness bool) (result *blockProcessingResult, err error) {
 	_, _, spanEnd := telemetry.StartSpan(ctx, "core.blockchain.InsertBlockWithoutSetHead")
 	defer spanEnd(&err)
 	if !bc.chainmu.TryLock() {
@@ -2891,8 +2900,31 @@ func (bc *BlockChain) InsertBlockWithoutSetHead(ctx context.Context, block *type
 	}
 	defer bc.chainmu.Unlock()
 
-	witness, _, err = bc.insertChain(ctx, types.Blocks{block}, false, makeWitness)
+	result, _, err = bc.insertChain(ctx, types.Blocks{block}, false, makeWitness)
 	return
+}
+
+// InclusionListSatisfied re-executes a block on top of its parent state and
+// reports whether it satisfies the given EIP-7805 inclusion list. It is meant
+// for blocks that were already imported without, or with a different, inclusion
+// list. Nothing is written to the database.
+func (bc *BlockChain) InclusionListSatisfied(ctx context.Context, block *types.Block, inclusionList types.Transactions) (bool, error) {
+	if len(inclusionList) == 0 || !bc.chainConfig.IsBogota(block.Number(), block.Time()) {
+		return true, nil
+	}
+	parent := bc.GetHeader(block.ParentHash(), block.NumberU64()-1)
+	if parent == nil {
+		return false, consensus.ErrUnknownAncestor
+	}
+	statedb, err := bc.StateAtForkBoundary(parent, block.Header())
+	if err != nil {
+		return false, err
+	}
+	res, err := bc.processor.Process(ctx, block.WithInclusionList(inclusionList), statedb, nil, nil, bc.overrideTracerActivation(false), nil)
+	if err != nil {
+		return false, err
+	}
+	return res.InclusionListSatisfied, nil
 }
 
 // SetCanonical rewinds the chain to set the new head block as the specified

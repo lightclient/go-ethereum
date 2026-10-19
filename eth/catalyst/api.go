@@ -92,8 +92,9 @@ type ConsensusAPI struct {
 	// (0 = no limit). Configured via ethconfig.Config.EngineMaxReorgDepth.
 	maxReorgDepth uint64
 
-	remoteBlocks *headerQueue  // Cache of remote payloads received
-	localBlocks  *payloadQueue // Cache of local payloads generated
+	remoteBlocks   *headerQueue        // Cache of remote payloads received
+	localBlocks    *payloadQueue       // Cache of local payloads generated
+	inclusionLists *inclusionListQueue // Cache of inclusion lists of remote payloads (EIP-7805)
 
 	// The forkchoice update and new payload method require us to return the
 	// latest valid hash in an invalid chain. To support that return, we need
@@ -150,6 +151,7 @@ func newConsensusAPIWithoutHeartbeat(eth *eth.Ethereum) *ConsensusAPI {
 		maxReorgDepth:     eth.EngineMaxReorgDepth(),
 		remoteBlocks:      newHeaderQueue(),
 		localBlocks:       newPayloadQueue(),
+		inclusionLists:    newInclusionListQueue(),
 		invalidBlocksHits: make(map[common.Hash]int),
 		invalidTipsets:    make(map[common.Hash]*types.Header),
 	}
@@ -229,7 +231,7 @@ func (api *ConsensusAPI) ForkchoiceUpdatedV4(ctx context.Context, update engine.
 			return engine.STATUS_INVALID, attributesErr("missing beacon root")
 		case params.SlotNumber == nil:
 			return engine.STATUS_INVALID, attributesErr("missing slot number")
-		case !api.checkFork(params.Timestamp, forks.Amsterdam, forks.BPO3, forks.BPO4, forks.BPO5, forks.Bogota):
+		case !api.checkFork(params.Timestamp, forks.Amsterdam, forks.BPO3, forks.BPO4, forks.BPO5):
 			return engine.STATUS_INVALID, unsupportedForkErr("fcuV4 must only be called for amsterdam payloads")
 		}
 	}
@@ -241,6 +243,39 @@ func (api *ConsensusAPI) ForkchoiceUpdatedV4(ctx context.Context, update engine.
 	// forkchoiceUpdate into a function that only updates the head and then a
 	// function that kicks off block construction.
 	return api.forkchoiceUpdated(ctx, update, params, engine.PayloadV4, false)
+}
+
+// ForkchoiceUpdatedV5 is equivalent to V4 with the addition of the EIP-7805
+// inclusion list in the payload attributes. It supports only PayloadAttributesV5,
+// and reports whether a VALID head satisfies the inclusion list it was delivered
+// with.
+func (api *ConsensusAPI) ForkchoiceUpdatedV5(ctx context.Context, update engine.ForkchoiceStateV1, params *engine.PayloadAttributes, custodyColumns *types.CustodyBitmap) (engine.ForkChoiceResponseV2, error) {
+	return api.forkchoiceUpdatedV5(ctx, update, params, custodyColumns, false)
+}
+
+func (api *ConsensusAPI) forkchoiceUpdatedV5(ctx context.Context, update engine.ForkchoiceStateV1, params *engine.PayloadAttributes, custodyColumns *types.CustodyBitmap, payloadWitness bool) (engine.ForkChoiceResponseV2, error) {
+	if params != nil {
+		switch {
+		case params.Withdrawals == nil:
+			return engine.STATUS_INVALID.V2(), attributesErr("missing withdrawals")
+		case params.BeaconRoot == nil:
+			return engine.STATUS_INVALID.V2(), attributesErr("missing beacon root")
+		case params.SlotNumber == nil:
+			return engine.STATUS_INVALID.V2(), attributesErr("missing slot number")
+		case params.InclusionListTransactions == nil:
+			return engine.STATUS_INVALID.V2(), attributesErr("missing inclusion list transactions")
+		case !api.checkFork(params.Timestamp, forks.Bogota):
+			return engine.STATUS_INVALID.V2(), unsupportedForkErr("fcuV5 must only be called for bogota payloads")
+		}
+	}
+	if custodyColumns != nil {
+		api.eth.BlobFetcher().UpdateCustody(*custodyColumns)
+	}
+	res, err := api.forkchoiceUpdated(ctx, update, params, engine.PayloadV4, payloadWitness)
+	if err == nil && res.PayloadStatus.Status == engine.VALID {
+		res.PayloadStatus.InclusionListSatisfied = api.headInclusionListSatisfied(ctx, update.HeadBlockHash)
+	}
+	return res.V2(), err
 }
 
 func (api *ConsensusAPI) forkchoiceUpdated(ctx context.Context, update engine.ForkchoiceStateV1, payloadAttributes *engine.PayloadAttributes, payloadVersion engine.PayloadVersion, payloadWitness bool) (result engine.ForkChoiceResponse, err error) {
@@ -397,6 +432,7 @@ func (api *ConsensusAPI) forkchoiceUpdated(ctx context.Context, update engine.Fo
 			BeaconRoot:     payloadAttributes.BeaconRoot,
 			SlotNum:        payloadAttributes.SlotNumber,
 			TargetGasLimit: payloadAttributes.TargetGasLimit,
+			InclusionList:  decodeInclusionList(payloadAttributes.InclusionListTransactions),
 			Version:        payloadVersion,
 		}
 		id := args.Id()
@@ -782,6 +818,92 @@ func (api *ConsensusAPI) HasBlobs(hashes []common.Hash) []bool {
 	return api.eth.BlobCache().HasBlobs(context.Background(), hashes)
 }
 
+// GetInclusionListV1 returns an EIP-7805 inclusion list built from the local
+// transaction pool on top of the current head.
+func (api *ConsensusAPI) GetInclusionListV1() []hexutil.Bytes {
+	txs := api.eth.Miner().BuildInclusionList()
+	list := make([]hexutil.Bytes, len(txs))
+	for i, tx := range txs {
+		list[i] = tx
+	}
+	return list
+}
+
+// headInclusionListSatisfied reports whether the forkchoice head satisfies the
+// inclusion list it was delivered with. A head that was not delivered with an
+// inclusion list, or whose list is no longer retained, has no constraints to
+// violate. A head that was not processed when its payload arrived is checked
+// against the retained list now.
+func (api *ConsensusAPI) headInclusionListSatisfied(ctx context.Context, head common.Hash) *bool {
+	item := api.inclusionLists.get(head)
+	if item == nil {
+		satisfied := true
+		return &satisfied
+	}
+	if item.satisfied != nil {
+		return item.satisfied
+	}
+	block := api.eth.BlockChain().GetBlockByHash(head)
+	if block == nil {
+		return nil
+	}
+	satisfied, err := api.eth.BlockChain().InclusionListSatisfied(ctx, block, item.txs)
+	if err != nil {
+		log.Warn("Failed to check inclusion list of forkchoice head", "number", block.NumberU64(), "hash", head, "err", err)
+		return nil
+	}
+	// A newPayload may have delivered the head with another list meanwhile,
+	// only record the verdict if the list is still the retained one.
+	api.inclusionLists.resolve(item, satisfied)
+	return &satisfied
+}
+
+// checkKnownPayloadInclusionList reports whether an already imported payload
+// satisfies the given inclusion list, re-executing it unless the same list was
+// evaluated before.
+func (api *ConsensusAPI) checkKnownPayloadInclusionList(ctx context.Context, block *types.Block, inclusionList types.Transactions) (bool, error) {
+	hash := block.Hash()
+	if item := api.inclusionLists.get(hash); item != nil && item.satisfied != nil && sameTransactions(item.txs, inclusionList) {
+		return *item.satisfied, nil
+	}
+	satisfied, err := api.eth.BlockChain().InclusionListSatisfied(ctx, block, inclusionList)
+	if err != nil {
+		return false, err
+	}
+	api.inclusionLists.put(hash, inclusionList, &satisfied)
+	return satisfied, nil
+}
+
+// sameTransactions reports whether two transaction lists are identical.
+func sameTransactions(a, b types.Transactions) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Hash() != b[i].Hash() {
+			return false
+		}
+	}
+	return true
+}
+
+// decodeInclusionList decodes the EIP-7805 inclusion list entries, skipping the
+// ones that are not valid transaction encodings. A nil list stays nil.
+func decodeInclusionList[T ~[]byte](entries []T) types.Transactions {
+	if entries == nil {
+		return nil
+	}
+	txs := make(types.Transactions, 0, len(entries))
+	for _, enc := range entries {
+		tx := new(types.Transaction)
+		if err := tx.UnmarshalBinary(enc); err != nil {
+			continue
+		}
+		txs = append(txs, tx)
+	}
+	return txs
+}
+
 // Helper for NewPayload* methods.
 var invalidStatus = engine.PayloadStatusV1{Status: engine.INVALID}
 
@@ -790,7 +912,7 @@ func (api *ConsensusAPI) NewPayloadV1(ctx context.Context, params engine.Executa
 	if params.Withdrawals != nil {
 		return invalidStatus, paramsErr("withdrawals not supported in V1")
 	}
-	return api.newPayload(ctx, params, nil, nil, nil, false)
+	return api.newPayload(ctx, params, nil, nil, nil, nil, false)
 }
 
 // NewPayloadV2 creates an Eth1 block, inserts it in the chain, and returns the status of the chain.
@@ -811,7 +933,7 @@ func (api *ConsensusAPI) NewPayloadV2(ctx context.Context, params engine.Executa
 	case params.BlobGasUsed != nil:
 		return invalidStatus, paramsErr("non-nil blobGasUsed pre-cancun")
 	}
-	return api.newPayload(ctx, params, nil, nil, nil, false)
+	return api.newPayload(ctx, params, nil, nil, nil, nil, false)
 }
 
 // NewPayloadV3 creates an Eth1 block, inserts it in the chain, and returns the status of the chain.
@@ -830,7 +952,7 @@ func (api *ConsensusAPI) NewPayloadV3(ctx context.Context, params engine.Executa
 	case !api.checkFork(params.Timestamp, forks.Cancun):
 		return invalidStatus, unsupportedForkErr("newPayloadV3 must only be called for cancun payloads")
 	}
-	return api.newPayload(ctx, params, versionedHashes, beaconRoot, nil, false)
+	return api.newPayload(ctx, params, versionedHashes, beaconRoot, nil, nil, false)
 }
 
 // NewPayloadV4 creates an Eth1 block, inserts it in the chain, and returns the status of the chain.
@@ -859,7 +981,7 @@ func (api *ConsensusAPI) NewPayloadV4(ctx context.Context, params engine.Executa
 	if err := validateRequests(requests); err != nil {
 		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(err)
 	}
-	return api.newPayload(ctx, params, versionedHashes, beaconRoot, requests, false)
+	return api.newPayload(ctx, params, versionedHashes, beaconRoot, requests, nil, false)
 }
 
 // NewPayloadV5 creates an Eth1 block, inserts it in the chain, and returns the status of the chain.
@@ -885,17 +1007,57 @@ func (api *ConsensusAPI) NewPayloadV5(ctx context.Context, params engine.Executa
 		// is present but does not decode (including the empty byte string) is
 		// not a params error, the payload is rejected as INVALID further down.
 		return invalidStatus, paramsErr("missing block access list post-amsterdam")
-	case !api.checkFork(params.Timestamp, forks.Amsterdam, forks.BPO3, forks.BPO4, forks.BPO5, forks.Bogota):
+	case !api.checkFork(params.Timestamp, forks.Amsterdam, forks.BPO3, forks.BPO4, forks.BPO5):
 		return invalidStatus, unsupportedForkErr("newPayloadV5 must only be called for amsterdam payloads")
 	}
 	requests := convertRequests(executionRequests)
 	if err := validateRequests(requests); err != nil {
 		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(err)
 	}
-	return api.newPayload(ctx, params, versionedHashes, beaconRoot, requests, false)
+	return api.newPayload(ctx, params, versionedHashes, beaconRoot, requests, nil, false)
 }
 
-func (api *ConsensusAPI) newPayload(ctx context.Context, params engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requests [][]byte, witness bool) (result engine.PayloadStatusV1, err error) {
+// NewPayloadV6 creates an Eth1 block, inserts it in the chain, and returns the
+// status of the chain along with whether the block satisfies the given EIP-7805
+// inclusion list.
+func (api *ConsensusAPI) NewPayloadV6(ctx context.Context, params engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, executionRequests []hexutil.Bytes, inclusionList []hexutil.Bytes) (engine.PayloadStatusV2, error) {
+	status, err := api.newPayloadV6(ctx, params, versionedHashes, beaconRoot, executionRequests, inclusionList, false)
+	return status.V2(), err
+}
+
+func (api *ConsensusAPI) newPayloadV6(ctx context.Context, params engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, executionRequests []hexutil.Bytes, inclusionList []hexutil.Bytes, witness bool) (engine.PayloadStatusV1, error) {
+	switch {
+	case params.Withdrawals == nil:
+		return invalidStatus, paramsErr("nil withdrawals post-shanghai")
+	case params.ExcessBlobGas == nil:
+		return invalidStatus, paramsErr("nil excessBlobGas post-cancun")
+	case params.BlobGasUsed == nil:
+		return invalidStatus, paramsErr("nil blobGasUsed post-cancun")
+	case versionedHashes == nil:
+		return invalidStatus, paramsErr("nil versionedHashes post-cancun")
+	case beaconRoot == nil:
+		return invalidStatus, paramsErr("nil beaconRoot post-cancun")
+	case executionRequests == nil:
+		return invalidStatus, paramsErr("nil executionRequests post-prague")
+	case params.SlotNumber == nil:
+		return invalidStatus, paramsErr("nil slotnumber post-amsterdam")
+	case params.BlockAccessList == nil:
+		return invalidStatus, paramsErr("missing block access list post-amsterdam")
+	case inclusionList == nil:
+		return invalidStatus, paramsErr("nil inclusionListTransactions post-bogota")
+	case !api.checkFork(params.Timestamp, forks.Bogota):
+		return invalidStatus, unsupportedForkErr("newPayloadV6 must only be called for bogota payloads")
+	}
+	requests := convertRequests(executionRequests)
+	if err := validateRequests(requests); err != nil {
+		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(err)
+	}
+	return api.newPayload(ctx, params, versionedHashes, beaconRoot, requests, decodeInclusionList(inclusionList), witness)
+}
+
+// newPayload imports the payload. If an inclusion list is given (non-nil), the
+// payload is checked against it and the verdict is reported for a VALID payload.
+func (api *ConsensusAPI) newPayload(ctx context.Context, params engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requests [][]byte, inclusionList types.Transactions, witness bool) (result engine.PayloadStatusV1, err error) {
 	// The locking here is, strictly, not required. Without these locks, this can happen:
 	//
 	// 1. NewPayload( execdata-N ) is invoked from the CL. It goes all the way down to
@@ -957,19 +1119,36 @@ func (api *ConsensusAPI) newPayload(ctx context.Context, params engine.Executabl
 			"error", err)
 		return api.invalid(err, nil), nil
 	}
+	if inclusionList != nil {
+		block = block.WithInclusionList(inclusionList)
+	}
 	// Stash away the last update to warn the user if the beacon client goes offline
 	api.lastNewPayloadUpdate.Store(time.Now().Unix())
 
 	// If we already have the block locally, ignore the entire execution and just
 	// return a fake success.
-	if block := api.eth.BlockChain().GetBlockByHash(params.BlockHash); block != nil {
-		log.Warn("Ignoring already known beacon payload", "number", params.Number, "hash", params.BlockHash, "age", common.PrettyAge(time.Unix(int64(block.Time()), 0)))
-		hash := block.Hash()
-		return engine.PayloadStatusV1{Status: engine.VALID, LatestValidHash: &hash}, nil
+	if known := api.eth.BlockChain().GetBlockByHash(params.BlockHash); known != nil {
+		log.Warn("Ignoring already known beacon payload", "number", params.Number, "hash", params.BlockHash, "age", common.PrettyAge(time.Unix(int64(known.Time()), 0)))
+		hash := known.Hash()
+		status := engine.PayloadStatusV1{Status: engine.VALID, LatestValidHash: &hash}
+		if inclusionList != nil {
+			satisfied, err := api.checkKnownPayloadInclusionList(ctx, block, inclusionList)
+			if err != nil {
+				log.Warn("Failed to check inclusion list of known payload", "number", params.Number, "hash", hash, "err", err)
+				return invalidStatus, engine.GenericServerError.With(err)
+			}
+			status.InclusionListSatisfied = &satisfied
+		}
+		return status, nil
 	}
 	// If this block was rejected previously, keep rejecting it
 	if res := api.checkInvalidAncestor(block.Hash(), block.Hash()); res != nil {
 		return *res, nil
+	}
+	// Retain the inclusion list until the payload is processed, either below or
+	// later on when a forkchoice update makes it the head.
+	if inclusionList != nil {
+		api.inclusionLists.put(block.Hash(), inclusionList, nil)
 	}
 	// If the parent is missing, we - in theory - could trigger a sync, but that
 	// would also entail a reorg. That is problematic if multiple sibling blocks
@@ -1003,7 +1182,7 @@ func (api *ConsensusAPI) newPayload(ctx context.Context, params engine.Executabl
 	}
 	log.Trace("Inserting block without sethead", "hash", block.Hash(), "number", block.Number())
 	start := time.Now()
-	proofs, err := api.eth.BlockChain().InsertBlockWithoutSetHead(ctx, block, witness)
+	res, err := api.eth.BlockChain().InsertBlockWithoutSetHead(ctx, block, witness)
 	processingTime := time.Since(start)
 	if err != nil {
 		log.Warn("NewPayload: inserting block failed", "error", err)
@@ -1047,14 +1226,31 @@ func (api *ConsensusAPI) newPayload(ctx context.Context, params engine.Executabl
 		Number:         block.NumberU64(),
 		ProcessingTime: processingTime,
 	})
-
-	// If witness collection was requested, inject that into the result too
-	var ow *hexutil.Bytes
-	if proofs != nil {
-		ow = new(hexutil.Bytes)
-		*ow, _ = rlp.EncodeToBytes(proofs)
+	status := engine.PayloadStatusV1{Status: engine.VALID, LatestValidHash: &hash}
+	if res != nil {
+		// If witness collection was requested, inject that into the result too
+		if proofs := res.Witness(); proofs != nil {
+			ow := new(hexutil.Bytes)
+			*ow, _ = rlp.EncodeToBytes(proofs)
+			status.Witness = ow
+		}
 	}
-	return engine.PayloadStatusV1{Status: engine.VALID, Witness: ow, LatestValidHash: &hash}, nil
+	if inclusionList != nil {
+		var satisfied bool
+		if res != nil {
+			satisfied = res.InclusionListSatisfied()
+			api.inclusionLists.put(hash, inclusionList, &satisfied)
+		} else {
+			// The block was not processed by this call (e.g. it got imported
+			// concurrently), evaluate the list separately.
+			if satisfied, err = api.checkKnownPayloadInclusionList(ctx, block, inclusionList); err != nil {
+				log.Warn("Failed to check inclusion list of payload", "number", params.Number, "hash", hash, "err", err)
+				return invalidStatus, engine.GenericServerError.With(err)
+			}
+		}
+		status.InclusionListSatisfied = &satisfied
+	}
+	return status, nil
 }
 
 // delayPayloadImport stashes the given block away for import at a later time,

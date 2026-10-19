@@ -68,20 +68,22 @@ var (
 // PayloadAttributes describes the environment context in which a block should
 // be built.
 type PayloadAttributes struct {
-	Timestamp             uint64              `json:"timestamp"             gencodec:"required"`
-	Random                common.Hash         `json:"prevRandao"            gencodec:"required"`
-	SuggestedFeeRecipient common.Address      `json:"suggestedFeeRecipient" gencodec:"required"`
-	Withdrawals           []*types.Withdrawal `json:"withdrawals"`
-	BeaconRoot            *common.Hash        `json:"parentBeaconBlockRoot"`
-	SlotNumber            *uint64             `json:"slotNumber"`
-	TargetGasLimit        *uint64             `json:"targetGasLimit"`
+	Timestamp                 uint64              `json:"timestamp"             gencodec:"required"`
+	Random                    common.Hash         `json:"prevRandao"            gencodec:"required"`
+	SuggestedFeeRecipient     common.Address      `json:"suggestedFeeRecipient" gencodec:"required"`
+	Withdrawals               []*types.Withdrawal `json:"withdrawals"`
+	BeaconRoot                *common.Hash        `json:"parentBeaconBlockRoot"`
+	SlotNumber                *uint64             `json:"slotNumber"`
+	TargetGasLimit            *uint64             `json:"targetGasLimit"`
+	InclusionListTransactions [][]byte            `json:"inclusionListTransactions"`
 }
 
 // JSON type overrides for PayloadAttributes.
 type payloadAttributesMarshaling struct {
-	Timestamp      hexutil.Uint64
-	SlotNumber     *hexutil.Uint64
-	TargetGasLimit *hexutil.Uint64
+	Timestamp                 hexutil.Uint64
+	SlotNumber                *hexutil.Uint64
+	TargetGasLimit            *hexutil.Uint64
+	InclusionListTransactions []hexutil.Bytes
 }
 
 //go:generate go run github.com/fjl/gencodec -type ExecutableData -field-override executableDataMarshaling -out ed_codec.go
@@ -189,6 +191,34 @@ type PayloadStatusV1 struct {
 	Witness         *hexutil.Bytes `json:"witness,omitempty"`
 	LatestValidHash *common.Hash   `json:"latestValidHash"`
 	ValidationError *string        `json:"validationError"`
+
+	// InclusionListSatisfied carries the EIP-7805 verdict on a VALID payload
+	// between the engine API internals. It is only exposed by PayloadStatusV2.
+	InclusionListSatisfied *bool `json:"-"`
+}
+
+// PayloadStatusV2 is PayloadStatusV1 extended with whether the payload satisfies
+// the EIP-7805 inclusion list, which is null unless the payload is VALID.
+type PayloadStatusV2 struct {
+	Status                 string         `json:"status"`
+	Witness                *hexutil.Bytes `json:"witness,omitempty"`
+	LatestValidHash        *common.Hash   `json:"latestValidHash"`
+	ValidationError        *string        `json:"validationError"`
+	InclusionListSatisfied *bool          `json:"inclusionListSatisfied"`
+}
+
+// V2 converts the status into a PayloadStatusV2.
+func (s PayloadStatusV1) V2() PayloadStatusV2 {
+	status := PayloadStatusV2{
+		Status:          s.Status,
+		Witness:         s.Witness,
+		LatestValidHash: s.LatestValidHash,
+		ValidationError: s.ValidationError,
+	}
+	if s.Status == VALID {
+		status.InclusionListSatisfied = s.InclusionListSatisfied
+	}
+	return status
 }
 
 type TransitionConfigurationV1 struct {
@@ -229,6 +259,18 @@ func (b *PayloadID) UnmarshalText(input []byte) error {
 type ForkChoiceResponse struct {
 	PayloadStatus PayloadStatusV1 `json:"payloadStatus"`
 	PayloadID     *PayloadID      `json:"payloadId"`
+}
+
+// ForkChoiceResponseV2 is the response of engine_forkchoiceUpdatedV5, whose
+// payload status is a PayloadStatusV2.
+type ForkChoiceResponseV2 struct {
+	PayloadStatus PayloadStatusV2 `json:"payloadStatus"`
+	PayloadID     *PayloadID      `json:"payloadId"`
+}
+
+// V2 converts the response into a ForkChoiceResponseV2.
+func (r ForkChoiceResponse) V2() ForkChoiceResponseV2 {
+	return ForkChoiceResponseV2{PayloadStatus: r.PayloadStatus.V2(), PayloadID: r.PayloadID}
 }
 
 type ForkchoiceStateV1 struct {

@@ -97,7 +97,7 @@ func (api *ConsensusAPI) ForkchoiceUpdatedWithWitnessV4(ctx context.Context, upd
 			return engine.STATUS_INVALID, attributesErr("missing beacon root")
 		case params.SlotNumber == nil:
 			return engine.STATUS_INVALID, attributesErr("missing slot number")
-		case !api.checkFork(params.Timestamp, forks.Amsterdam, forks.BPO3, forks.BPO4, forks.BPO5, forks.Bogota):
+		case !api.checkFork(params.Timestamp, forks.Amsterdam, forks.BPO3, forks.BPO4, forks.BPO5):
 			return engine.STATUS_INVALID, unsupportedForkErr("fcuV4 must only be called for amsterdam payloads")
 		}
 	}
@@ -111,13 +111,19 @@ func (api *ConsensusAPI) ForkchoiceUpdatedWithWitnessV4(ctx context.Context, upd
 	return api.forkchoiceUpdated(ctx, update, params, engine.PayloadV4, true)
 }
 
+// ForkchoiceUpdatedWithWitnessV5 is analogous to ForkchoiceUpdatedV5, only it
+// generates an execution witness too if block building was requested.
+func (api *ConsensusAPI) ForkchoiceUpdatedWithWitnessV5(ctx context.Context, update engine.ForkchoiceStateV1, params *engine.PayloadAttributes, custodyColumns *types.CustodyBitmap) (engine.ForkChoiceResponseV2, error) {
+	return api.forkchoiceUpdatedV5(ctx, update, params, custodyColumns, true)
+}
+
 // NewPayloadWithWitnessV1 is analogous to NewPayloadV1, only it also generates
 // and returns a stateless witness after running the payload.
 func (api *ConsensusAPI) NewPayloadWithWitnessV1(ctx context.Context, params engine.ExecutableData) (engine.PayloadStatusV1, error) {
 	if params.Withdrawals != nil {
 		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(errors.New("withdrawals not supported in V1"))
 	}
-	return api.newPayload(ctx, params, nil, nil, nil, true)
+	return api.newPayload(ctx, params, nil, nil, nil, nil, true)
 }
 
 // NewPayloadWithWitnessV2 is analogous to NewPayloadV2, only it also generates
@@ -139,7 +145,7 @@ func (api *ConsensusAPI) NewPayloadWithWitnessV2(ctx context.Context, params eng
 	case params.BlobGasUsed != nil:
 		return invalidStatus, paramsErr("non-nil blobGasUsed pre-cancun")
 	}
-	return api.newPayload(ctx, params, nil, nil, nil, true)
+	return api.newPayload(ctx, params, nil, nil, nil, nil, true)
 }
 
 // NewPayloadWithWitnessV3 is analogous to NewPayloadV3, only it also generates
@@ -159,7 +165,7 @@ func (api *ConsensusAPI) NewPayloadWithWitnessV3(ctx context.Context, params eng
 	case !api.checkFork(params.Timestamp, forks.Cancun):
 		return invalidStatus, unsupportedForkErr("newPayloadV3 must only be called for cancun payloads")
 	}
-	return api.newPayload(ctx, params, versionedHashes, beaconRoot, nil, true)
+	return api.newPayload(ctx, params, versionedHashes, beaconRoot, nil, nil, true)
 }
 
 // NewPayloadWithWitnessV4 is analogous to NewPayloadV4, only it also generates
@@ -185,7 +191,7 @@ func (api *ConsensusAPI) NewPayloadWithWitnessV4(ctx context.Context, params eng
 	if err := validateRequests(requests); err != nil {
 		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(err)
 	}
-	return api.newPayload(ctx, params, versionedHashes, beaconRoot, requests, true)
+	return api.newPayload(ctx, params, versionedHashes, beaconRoot, requests, nil, true)
 }
 
 // NewPayloadWithWitnessV5 is analogous to NewPayloadV5, only it also generates
@@ -208,14 +214,21 @@ func (api *ConsensusAPI) NewPayloadWithWitnessV5(ctx context.Context, params eng
 		return invalidStatus, paramsErr("nil block access list post-amsterdam")
 	case params.SlotNumber == nil:
 		return invalidStatus, paramsErr("nil slotnumber post-amsterdam")
-	case !api.checkFork(params.Timestamp, forks.Amsterdam, forks.BPO3, forks.BPO4, forks.BPO5, forks.Bogota):
+	case !api.checkFork(params.Timestamp, forks.Amsterdam, forks.BPO3, forks.BPO4, forks.BPO5):
 		return invalidStatus, unsupportedForkErr("newPayloadV5 must only be called for amsterdam payloads")
 	}
 	requests := convertRequests(executionRequests)
 	if err := validateRequests(requests); err != nil {
 		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(err)
 	}
-	return api.newPayload(ctx, params, versionedHashes, beaconRoot, requests, true)
+	return api.newPayload(ctx, params, versionedHashes, beaconRoot, requests, nil, true)
+}
+
+// NewPayloadWithWitnessV6 is analogous to NewPayloadV6, only it also generates
+// and returns a stateless witness after running the payload.
+func (api *ConsensusAPI) NewPayloadWithWitnessV6(ctx context.Context, params engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, executionRequests []hexutil.Bytes, inclusionList []hexutil.Bytes) (engine.PayloadStatusV2, error) {
+	status, err := api.newPayloadV6(ctx, params, versionedHashes, beaconRoot, executionRequests, inclusionList, true)
+	return status.V2(), err
 }
 
 // ExecuteStatelessPayloadV1 is analogous to NewPayloadV1, only it operates in

@@ -210,6 +210,11 @@ type Block struct {
 	withdrawals  Withdrawals
 	accessList   *bal.BlockAccessList
 
+	// inclusionList holds the EIP-7805 inclusion list transactions the block is
+	// checked against. Like the access list, it is not part of the block encoding,
+	// it rides along so that block processing can evaluate it.
+	inclusionList Transactions
+
 	// caches
 	hash atomic.Pointer[common.Hash]
 	size atomic.Uint64
@@ -372,6 +377,10 @@ func (b *Block) Transactions() Transactions       { return b.transactions }
 func (b *Block) Withdrawals() Withdrawals         { return b.withdrawals }
 func (b *Block) AccessList() *bal.BlockAccessList { return b.accessList }
 
+// InclusionList returns the EIP-7805 inclusion list transactions attached to the
+// block, if any.
+func (b *Block) InclusionList() Transactions { return b.inclusionList }
+
 func (b *Block) Transaction(hash common.Hash) *Transaction {
 	for _, transaction := range b.transactions {
 		if transaction.Hash() == hash {
@@ -502,11 +511,12 @@ func NewBlockWithHeader(header *Header) *Block {
 // the sealed one.
 func (b *Block) WithSeal(header *Header) *Block {
 	return &Block{
-		header:       CopyHeader(header),
-		transactions: b.transactions,
-		uncles:       b.uncles,
-		withdrawals:  b.withdrawals,
-		accessList:   b.accessList,
+		header:        CopyHeader(header),
+		transactions:  b.transactions,
+		uncles:        b.uncles,
+		withdrawals:   b.withdrawals,
+		accessList:    b.accessList,
+		inclusionList: b.inclusionList,
 	}
 }
 
@@ -514,11 +524,12 @@ func (b *Block) WithSeal(header *Header) *Block {
 // provided body.
 func (b *Block) WithBody(body Body) *Block {
 	block := &Block{
-		header:       b.header,
-		transactions: slices.Clone(body.Transactions),
-		uncles:       make([]*Header, len(body.Uncles)),
-		withdrawals:  slices.Clone(body.Withdrawals),
-		accessList:   b.accessList,
+		header:        b.header,
+		transactions:  slices.Clone(body.Transactions),
+		uncles:        make([]*Header, len(body.Uncles)),
+		withdrawals:   slices.Clone(body.Withdrawals),
+		accessList:    b.accessList,
+		inclusionList: b.inclusionList,
 	}
 	for i := range body.Uncles {
 		block.uncles[i] = CopyHeader(body.Uncles[i])
@@ -536,11 +547,25 @@ func (b *Block) WithAccessList(accessList *bal.BlockAccessList) *Block {
 // if the provided list may be modified by other actors.
 func (b *Block) WithAccessListUnsafe(accessList *bal.BlockAccessList) *Block {
 	return &Block{
-		header:       b.header,
-		transactions: b.transactions,
-		uncles:       b.uncles,
-		withdrawals:  b.withdrawals,
-		accessList:   accessList,
+		header:        b.header,
+		transactions:  b.transactions,
+		uncles:        b.uncles,
+		withdrawals:   b.withdrawals,
+		accessList:    accessList,
+		inclusionList: b.inclusionList,
+	}
+}
+
+// WithInclusionList returns a copy of the block with the given EIP-7805 inclusion
+// list transactions attached. The transactions are not copied.
+func (b *Block) WithInclusionList(inclusionList Transactions) *Block {
+	return &Block{
+		header:        b.header,
+		transactions:  b.transactions,
+		uncles:        b.uncles,
+		withdrawals:   b.withdrawals,
+		accessList:    b.accessList,
+		inclusionList: inclusionList,
 	}
 }
 

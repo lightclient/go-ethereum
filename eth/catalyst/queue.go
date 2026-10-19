@@ -38,6 +38,11 @@ const maxTrackedPayloads = 10
 // limit.
 const maxTrackedHeaders = 96
 
+// maxTrackedInclusionLists is the maximum number of payloads whose EIP-7805
+// inclusion lists the execution engine tracks before evicting old ones. The
+// lists are needed to answer forkchoice updates about recent payloads.
+const maxTrackedInclusionLists = 96
+
 // payloadQueueItem represents an id->payload tuple to store until it's retrieved
 // or evicted.
 type payloadQueueItem struct {
@@ -174,6 +179,90 @@ func (q *headerQueue) get(hash common.Hash) *types.Header {
 		}
 		if item.hash == hash {
 			return item.header
+		}
+	}
+	return nil
+}
+
+// inclusionListQueueItem represents the inclusion list a payload was delivered
+// with, together with the verdict on it if the payload was processed already.
+type inclusionListQueueItem struct {
+	hash      common.Hash
+	txs       types.Transactions
+	satisfied *bool
+}
+
+// inclusionListQueue tracks the inclusion lists of the latest handful of
+// payloads received via newPayload.
+type inclusionListQueue struct {
+	items []*inclusionListQueueItem
+	lock  sync.RWMutex
+}
+
+// newInclusionListQueue creates a pre-initialized queue with a fixed number of
+// slots all containing empty items.
+func newInclusionListQueue() *inclusionListQueue {
+	return &inclusionListQueue{
+		items: make([]*inclusionListQueueItem, maxTrackedInclusionLists),
+	}
+}
+
+// put inserts the inclusion list of a payload, along with the verdict on it if
+// known, replacing any previous entry of the same payload.
+func (q *inclusionListQueue) put(hash common.Hash, txs types.Transactions, satisfied *bool) {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+
+	// Shift the entries ahead of the payload's previous entry (or of the first
+	// free slot, or all but the oldest) back by one and insert at the front.
+	end := len(q.items) - 1
+	for i, item := range q.items {
+		if item == nil || item.hash == hash {
+			end = i
+			break
+		}
+	}
+	copy(q.items[1:end+1], q.items[:end])
+	q.items[0] = &inclusionListQueueItem{
+		hash:      hash,
+		txs:       txs,
+		satisfied: satisfied,
+	}
+}
+
+// resolve records the verdict on a previously retrieved entry, unless the entry
+// was replaced in the meantime.
+func (q *inclusionListQueue) resolve(entry *inclusionListQueueItem, satisfied bool) {
+	q.lock.Lock()
+	defer q.lock.Unlock()
+
+	for i, item := range q.items {
+		if item == nil {
+			return
+		}
+		if item == entry {
+			q.items[i] = &inclusionListQueueItem{
+				hash:      entry.hash,
+				txs:       entry.txs,
+				satisfied: &satisfied,
+			}
+			return
+		}
+	}
+}
+
+// get retrieves the inclusion list stored for a payload and the verdict on it,
+// if any. The returned item must not be modified.
+func (q *inclusionListQueue) get(hash common.Hash) *inclusionListQueueItem {
+	q.lock.RLock()
+	defer q.lock.RUnlock()
+
+	for _, item := range q.items {
+		if item == nil {
+			return nil // no more items
+		}
+		if item.hash == hash {
+			return item
 		}
 	}
 	return nil

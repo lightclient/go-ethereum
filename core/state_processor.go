@@ -137,6 +137,10 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 		allLogs = append(allLogs, receipt.Logs...)
 		blockAccessList.Merge(bal)
 	}
+	// Check the inclusion list against the state after the last transaction,
+	// before withdrawals and the post-execution system calls (EIP-7805).
+	ilSatisfied := inclusionListSatisfied(config, header, block.Transactions(), block.InclusionList(), statedb, gp)
+
 	requests, bal, err := PostExecution(ctx, config, block.Number(), block.Time(), allLogs, block.Withdrawals(), evm, uint32(len(block.Transactions())+1))
 	if err != nil {
 		return nil, err
@@ -156,11 +160,12 @@ func (p *StateProcessor) Process(ctx context.Context, block *types.Block, stated
 	pipeline.joinReceipts()
 
 	return &ProcessResult{
-		Receipts: receipts,
-		Requests: requests,
-		Logs:     allLogs,
-		GasUsed:  gp.Used(),
-		pipeline: pipeline,
+		Receipts:               receipts,
+		Requests:               requests,
+		Logs:                   allLogs,
+		GasUsed:                gp.Used(),
+		InclusionListSatisfied: ilSatisfied,
+		pipeline:               pipeline,
 	}, nil
 }
 

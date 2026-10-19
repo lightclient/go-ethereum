@@ -104,9 +104,9 @@ type SimulatedBeacon struct {
 
 func payloadVersion(config *params.ChainConfig, time uint64) engine.PayloadVersion {
 	switch config.LatestFork(time) {
-	case forks.Amsterdam:
+	case forks.Bogota, forks.Amsterdam:
 		return engine.PayloadV4
-	case forks.Bogota, forks.BPO5, forks.BPO4, forks.BPO3, forks.BPO2, forks.BPO1, forks.Osaka, forks.Prague, forks.Cancun:
+	case forks.BPO5, forks.BPO4, forks.BPO3, forks.BPO2, forks.BPO1, forks.Osaka, forks.Prague, forks.Cancun:
 		return engine.PayloadV3
 	case forks.Paris, forks.Shanghai:
 		return engine.PayloadV2
@@ -295,7 +295,7 @@ func (c *SimulatedBeacon) sealBlock(withdrawals []*types.Withdrawal, timestamp u
 	})
 
 	// Mark the payload as canon
-	_, err = c.engineAPI.newPayload(npCtx, *payload, blobHashes, beaconRoot, requests, false)
+	_, err = c.engineAPI.newPayload(npCtx, *payload, blobHashes, beaconRoot, requests, nil, false)
 	npSpanEnd(&err)
 	if err != nil {
 		return err

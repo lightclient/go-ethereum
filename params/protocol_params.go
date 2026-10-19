@@ -161,6 +161,9 @@ const (
 	BaseFeeChangeNumeratorEIP8198   = 5  // Numerator of the max base fee change per block after EIP-8198.
 	BaseFeeChangeDenominatorEIP8198 = 48 // Denominator of the max base fee change per block after EIP-8198.
 
+	// MaxTransactionsBytesPerInclusionList is the maximum total byte size of transactions in an inclusion list (EIP-7805).
+	MaxTransactionsBytesPerInclusionList uint64 = 8192
+
 	MaxCodeSize              = 24576                    // Maximum bytecode to permit for a contract
 	MaxInitCodeSize          = 2 * MaxCodeSize          // Maximum initcode to permit in a creation transaction and create instructions
 	MaxCodeSizeAmsterdam     = 65536                    // Maximum bytecode to permit for a contract post Amsterdam

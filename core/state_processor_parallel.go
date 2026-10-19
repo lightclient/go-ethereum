@@ -278,6 +278,10 @@ func (p *StateProcessor) processParallel(ctx context.Context, block *types.Block
 	if err != nil {
 		return nil, err
 	}
+	// Check the inclusion list against the state after the last transaction,
+	// before the post-execution system calls modify it (EIP-7805).
+	ilSatisfied := inclusionListSatisfied(config, header, txs, block.InclusionList(), postState, gp)
+
 	postEVM := vm.NewEVM(context, postState, config, cfg)
 	if jumpDestCache != nil {
 		postEVM.SetJumpDestCache(jumpDestCache)
@@ -326,11 +330,12 @@ func (p *StateProcessor) processParallel(ctx context.Context, block *types.Block
 		"elapsed", common.PrettyDuration(time.Since(start)),
 	)
 	return &ProcessResult{
-		Receipts: receipts,
-		Requests: requests,
-		Logs:     allLogs,
-		GasUsed:  gp.Used(),
-		pipeline: pipeline,
+		Receipts:               receipts,
+		Requests:               requests,
+		Logs:                   allLogs,
+		GasUsed:                gp.Used(),
+		InclusionListSatisfied: ilSatisfied,
+		pipeline:               pipeline,
 	}, nil
 }
 
