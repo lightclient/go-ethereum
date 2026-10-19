@@ -102,6 +102,7 @@ var (
 		BlobScheduleConfig: &BlobScheduleConfig{
 			Cancun: DefaultCancunBlobConfig,
 			Prague: DefaultPragueBlobConfig,
+			Bogota: DefaultBogotaBlobConfig,
 		},
 	}
 
@@ -271,6 +272,12 @@ var (
 		Target:         14,
 		Max:            21,
 		UpdateFraction: 13739630,
+	}
+	// DefaultBogotaBlobConfig is the default blob configuration for the Bogota fork (EIP-8198).
+	DefaultBogotaBlobConfig = &BlobConfig{
+		Target:         12,
+		Max:            18,
+		UpdateFraction: 12018519,
 	}
 	// DefaultBlobSchedule is the latest configured blob schedule for Ethereum mainnet.
 	DefaultBlobSchedule = &BlobScheduleConfig{
@@ -564,7 +571,7 @@ func (c *ChainConfig) Description() string {
 		banner += fmt.Sprintf(" - Amsterdam:                   @%-10v\n", *c.AmsterdamTime)
 	}
 	if c.BogotaTime != nil {
-		banner += fmt.Sprintf(" - Bogota:                      @%-10v\n", *c.BogotaTime)
+		banner += fmt.Sprintf(" - Bogota:                      @%-10v blob: (%s)\n", *c.BogotaTime, c.BlobScheduleConfig.Bogota)
 	}
 	if c.UBTTime != nil {
 		banner += fmt.Sprintf(" - UBT:                         @%-10v\n", *c.UBTTime)
@@ -592,7 +599,8 @@ func (bc *BlobConfig) String() string {
 //
 // From Prague onward, the blob schedule is updated only at BPO (Blob Parameter-Only)
 // forks. Named forks such as Osaka or Amsterdam inherit the most recently configured
-// BPO entry and must not declare their own BlobConfig.
+// BPO entry and must not declare their own BlobConfig. The exception is Bogota,
+// which carries its own entry per EIP-8198.
 type BlobScheduleConfig struct {
 	Cancun *BlobConfig `json:"cancun,omitempty"`
 	Prague *BlobConfig `json:"prague,omitempty"`
@@ -601,6 +609,7 @@ type BlobScheduleConfig struct {
 	BPO3   *BlobConfig `json:"bpo3,omitempty"`
 	BPO4   *BlobConfig `json:"bpo4,omitempty"`
 	BPO5   *BlobConfig `json:"bpo5,omitempty"`
+	Bogota *BlobConfig `json:"bogota,omitempty"`
 }
 
 // IsHomestead returns whether num is either equal to the homestead block or greater.
@@ -888,6 +897,7 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{name: "bpo3", timestamp: c.BPO3Time, config: bsc.BPO3},
 		{name: "bpo4", timestamp: c.BPO4Time, config: bsc.BPO4},
 		{name: "bpo5", timestamp: c.BPO5Time, config: bsc.BPO5},
+		{name: "bogota", timestamp: c.BogotaTime, config: bsc.Bogota},
 	} {
 		if cur.config != nil {
 			if err := cur.config.validate(); err != nil {
@@ -1012,9 +1022,13 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	return nil
 }
 
-// BaseFeeChangeDenominator bounds the amount the base fee can change between blocks.
-func (c *ChainConfig) BaseFeeChangeDenominator() uint64 {
-	return DefaultBaseFeeChangeDenominator
+// BaseFeeChangeFraction returns the numerator and denominator bounding the
+// amount the base fee can change between blocks at the given block time.
+func (c *ChainConfig) BaseFeeChangeFraction(num *big.Int, time uint64) (uint64, uint64) {
+	if c.IsBogota(num, time) {
+		return BaseFeeChangeNumeratorEIP8198, BaseFeeChangeDenominatorEIP8198
+	}
+	return 1, DefaultBaseFeeChangeDenominator
 }
 
 // ElasticityMultiplier bounds the maximum gas limit an EIP-1559 block may have.
@@ -1068,6 +1082,7 @@ func (c *ChainConfig) BlobConfig(fork forks.Fork) *BlobConfig {
 		at  forks.Fork
 		cfg *BlobConfig
 	}{
+		{forks.Bogota, bsc.Bogota},
 		{forks.BPO5, bsc.BPO5},
 		{forks.BPO4, bsc.BPO4},
 		{forks.BPO3, bsc.BPO3},

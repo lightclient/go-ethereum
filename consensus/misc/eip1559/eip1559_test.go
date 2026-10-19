@@ -124,7 +124,48 @@ func TestCalcBaseFee(t *testing.T) {
 			GasUsed:  test.parentGasUsed,
 			BaseFee:  big.NewInt(test.parentBaseFee),
 		}
-		if have, want := CalcBaseFee(config(), parent), big.NewInt(test.expectedBaseFee); have.Cmp(want) != 0 {
+		if have, want := CalcBaseFee(config(), parent, 0), big.NewInt(test.expectedBaseFee); have.Cmp(want) != 0 {
+			t.Errorf("test %d: have %d  want %d, ", i, have, want)
+		}
+	}
+}
+
+// TestCalcBaseFeeBogota tests the EIP-8198 base fee change bound (5/48) and that
+// the fork is selected by the child block's timestamp.
+func TestCalcBaseFeeBogota(t *testing.T) {
+	const bogotaTime = 1000
+	cfg := config()
+	cfg.ShanghaiTime = new(uint64)
+	cfg.CancunTime = new(uint64)
+	cfg.PragueTime = new(uint64)
+	cfg.OsakaTime = new(uint64)
+	cfg.AmsterdamTime = new(uint64)
+	bogota := uint64(bogotaTime)
+	cfg.BogotaTime = &bogota
+
+	tests := []struct {
+		parentBaseFee   int64
+		parentGasLimit  uint64
+		parentGasUsed   uint64
+		headTimestamp   uint64
+		expectedBaseFee int64
+	}{
+		{params.InitialBaseFee, 20000000, 10000000, bogotaTime, params.InitialBaseFee}, // usage == target
+		{params.InitialBaseFee, 20000000, 9000000, bogotaTime, 989583334},              // usage below target
+		{params.InitialBaseFee, 20000000, 11000000, bogotaTime, 1010416666},            // usage above target
+		{7, 20000000, 10000001, bogotaTime, 8},                                         // minimum increase of 1
+		{params.InitialBaseFee, 20000000, 9000000, bogotaTime - 1, 987500000},          // child pre-Bogota uses 1/8
+		{params.InitialBaseFee, 20000000, 11000000, bogotaTime - 1, 1012500000},        // child pre-Bogota uses 1/8
+	}
+	for i, test := range tests {
+		parent := &types.Header{
+			Number:   common.Big32,
+			Time:     bogotaTime - 1,
+			GasLimit: test.parentGasLimit,
+			GasUsed:  test.parentGasUsed,
+			BaseFee:  big.NewInt(test.parentBaseFee),
+		}
+		if have, want := CalcBaseFee(cfg, parent, test.headTimestamp), big.NewInt(test.expectedBaseFee); have.Cmp(want) != 0 {
 			t.Errorf("test %d: have %d  want %d, ", i, have, want)
 		}
 	}

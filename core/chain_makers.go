@@ -243,7 +243,7 @@ func (b *BlockGen) AddUncle(h *types.Header) {
 	// The gas limit and price should be derived from the parent
 	h.GasLimit = parent.GasLimit
 	if b.cm.config.IsLondon(h.Number) {
-		h.BaseFee = eip1559.CalcBaseFee(b.cm.config, parent)
+		h.BaseFee = eip1559.CalcBaseFee(b.cm.config, parent, h.Time)
 		if !b.cm.config.IsLondon(parent.Number) {
 			parentGasLimit := parent.GasLimit * b.cm.config.ElasticityMultiplier()
 			h.GasLimit = CalcGasLimit(parentGasLimit, parentGasLimit)
@@ -302,6 +302,9 @@ func (b *BlockGen) OffsetTime(seconds int64) {
 		panic("block time out of range")
 	}
 	b.header.Difficulty = b.engine.CalcDifficulty(b.cm, b.header.Time, b.parent.Header())
+	if b.header.BaseFee != nil {
+		b.header.BaseFee = eip1559.CalcBaseFee(b.cm.config, b.parent.Header(), b.header.Time)
+	}
 }
 
 // ConsensusLayerRequests returns the EIP-7685 requests which have accumulated so far.
@@ -529,7 +532,7 @@ func (cm *chainMaker) makeHeader(parent *types.Block, engine consensus.Engine) *
 		Time:       time,
 	}
 	if cm.config.IsLondon(header.Number) {
-		header.BaseFee = eip1559.CalcBaseFee(cm.config, parentHeader)
+		header.BaseFee = eip1559.CalcBaseFee(cm.config, parentHeader, header.Time)
 		if !cm.config.IsLondon(parent.Number()) {
 			parentGasLimit := parent.GasLimit() * cm.config.ElasticityMultiplier()
 			header.GasLimit = CalcGasLimit(parentGasLimit, parentGasLimit)

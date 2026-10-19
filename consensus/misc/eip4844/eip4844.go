@@ -63,6 +63,8 @@ func latestBlobConfig(cfg *params.ChainConfig, time uint64) (BlobConfig, error) 
 		bc     *params.BlobConfig
 	)
 	switch {
+	case cfg.IsBogota(london, time) && s.Bogota != nil:
+		bc = s.Bogota
 	case cfg.IsBPO5(london, time) && s.BPO5 != nil:
 		bc = s.BPO5
 	case cfg.IsBPO4(london, time) && s.BPO4 != nil:
